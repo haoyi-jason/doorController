@@ -2,10 +2,16 @@
 #define _SYSPARAM_
 #include <time.h>
 
+/*
+EEP_HEADING revision
+0x45503031: initial
+0x45503032: add freq1, freq2
 
 
+*/
 
-#define EEP_HEADING              0x45503031
+
+#define EEP_HEADING              0x45503032
 #define EEP_STORE_OFFSET        0x100
 
 typedef enum{
@@ -75,6 +81,7 @@ typedef struct{
   int16_t angleValidCycles;     // 阻擋判斷時間(cycles)
   uint16_t ramp;                        // 馬達加/減速值
   uint16_t adSampleIgnore;      // 啟動取樣延時
+  uint16_t freq1, freq2;        // pwm frequency
 }_door_global_config_t;
 
 typedef struct{

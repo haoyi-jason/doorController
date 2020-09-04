@@ -43,6 +43,7 @@ const _door_global_config_t default_door_config = {
   10,
   20,
   5, // 500ms
+  60,60 // hz
 };
 
 //const _door_config_t door_default[] = {

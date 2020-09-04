@@ -55,11 +55,8 @@ static const I2CConfig i2ccfg = {
 //};
 
 // driving frequency = PWM_FREQ/PWM_PERIOD, Hz
-#define PWM_FREQ        200000
-#define PWM_PERIOD      3333
-//#define PWM_PERIOD      815
-//#define PWM_FREQ        PWM_PERIOD*100
-#define accel   10
+#define PWM_FREQ        6000000
+#define PWM_PERIOD      865
 _appParam_t appParam;
 
 void setPad(struct dio_map_s *p)
@@ -251,12 +248,12 @@ static void adccallback(ADCDriver *adcp, adcsample_t *buffer,size_t n)
  
   appParam.doorState[0].op_current = chSum[0];
   appParam.doorState[1].op_current = chSum[1];
-  appParam.vr6 = chSum[2];
-//  if(appParam.vr6 > 60)
-//    appParam.vr6 = 60;
+  appParam.vr6 = 4095 - chSum[2]; // reverse
   
-  appParam.motorConfig[0].dc_current = chSum[0] * 1.5;
-  appParam.motorConfig[1].dc_current = chSum[1] * 1.5;
+  appParam.motorConfig[0].dc_current = (chSum[0] - appParam.doorState[0].idle_current) * 1.13;
+  appParam.motorConfig[1].dc_current = (chSum[1] - appParam.doorState[1].idle_current) * 1.13;
+  if(appParam.motorConfig[0].dc_current < 0) appParam.motorConfig[0].dc_current = 0;
+  if(appParam.motorConfig[1].dc_current < 0) appParam.motorConfig[1].dc_current = 0;
   
   if(appParam.motorConfig[0].dc_current < 0){
     chSum[0]++;
@@ -519,13 +516,16 @@ void alarm(uint8_t code)
 {
   switch(code){
   case ALM_DOOR_BLOCKING:
-    set_beep(250,250,4);
+    set_beep(250,250,2);
     break;
   case ALM_DOOR_OC:
-    set_beep(500,500,2);
+    set_beep(250,250,4);
     break;
   case ALM_LOCK:
     set_beep(1000,250,2);
+    break;
+  case ALM_INP:
+    set_beep(1000,250,4);
     break;
   }
 }
@@ -595,7 +595,9 @@ static THD_FUNCTION(procMotorPosRun,p)
   uint32_t errState = 0;
   uint8_t currentValidDelay = moduleParam.doorConfig.adSampleIgnore;
   mr->m->inPos = false;
-  uint8_t inpValidCycle = moduleParam.doorConfig.actionDelay;
+  uint8_t inpValidCycle = moduleParam.doorConfig.actionDelay<<1;
+  int16_t validAngle;
+
   while(run){
     eventmask_t evt = chEvtWaitAnyTimeout(ALL_EVENTS,TIME_IMMEDIATE);
     if(evt & EV_ABORT_OC){
@@ -612,10 +614,14 @@ static THD_FUNCTION(procMotorPosRun,p)
         
     // valid for speed
     if(mr->actType == ACT_OPEN){
-      if(mr->m->angle > mr->d->sldOpenAngle)
+      if(mr->m->angle > mr->d->sldOpenAngle){
         speed = mr->d->slowSpeed;
-      else
+        validAngle = moduleParam.doorConfig.angleValidDeg>>2;
+      }
+      else{
         speed = mr->d->normalSpeed;  
+        validAngle = moduleParam.doorConfig.angleValidDeg;
+      }
 
       if(mr->stopType & ST_POSITION){
         if(mr->m->angle >= mr->d->openAngle){
@@ -635,21 +641,34 @@ static THD_FUNCTION(procMotorPosRun,p)
     else{ // door close
       if(mr->m->angle < mr->d->sldCloseAngle){
         speed = mr->d->slowSpeed;
+        validAngle = moduleParam.doorConfig.angleValidDeg;
       }
       else{
         speed = mr->d->normalSpeed;
+        validAngle = moduleParam.doorConfig.angleValidDeg>>2;
       }
 
       if(mr->stopType & ST_HOME){
-        if(mr->m->inhome){
-          speed = 0;
-          mr->m->inPos = true;
-          run = false;
-        }
-        else if(mr->m->angle < mr->d->zero_angle_error){
-          if(inpValidCycle) inpValidCycle--;
-          if(inpValidCycle == 0){
-            errState = ERR_INPOSITION;
+        if(mr->m->orgFound){
+          if(mr->m->inhome  || (mr->m->angle < mr->d->zero_angle_error)){
+            if(!mr->m->inhome){
+              // add short delay here
+              if(inpValidCycle) inpValidCycle--;
+              if(inpValidCycle == 0){
+                speed = 0;
+                mr->m->inPos = true;
+                run = false;
+              }
+            }else{
+              speed = 0;
+              mr->m->inPos = true;
+              run = false;
+            }
+          }
+        }else{
+          if(mr->m->inhome){
+            speed = 0;
+            mr->m->inPos = true;
             run = false;
           }
         }
@@ -667,15 +686,15 @@ static THD_FUNCTION(procMotorPosRun,p)
     }
         
     // valid for current
-    if(currentValidDelay) currentValidDelay--;
-    if(currentValidDelay == 0){
-      if(mr->m->dc_current > mr->d->normalMaxCurrent){
-        errState = ERR_OVERCURRENT;
-        speed = 0;
-      }
-    }
+//    if(currentValidDelay) currentValidDelay--;
+//    if(currentValidDelay == 0){
+//      if(mr->m->dc_current > mr->d->normalMaxCurrent){
+//        SET_ERR(errState,ERR_OVERCURRENT);
+//        speed = 0;
+//      }
+//    }
     
-    mr->d->max_working_current = (mr->d->max_working_current>mr->m->dc_current)?mr->d->max_working_current:mr->m->dc_current;
+//    mr->d->max_working_current = (mr->d->max_working_current>mr->m->dc_current)?mr->d->max_working_current:mr->m->dc_current;
     
     // valid for door lock
     if(mr->m->orgFound){
@@ -685,23 +704,29 @@ static THD_FUNCTION(procMotorPosRun,p)
           checkCycle = moduleParam.doorConfig.angleValidCycles;
         }else{
           // valid for current
-          if(mr->m->dc_current > mr->d->normalMaxCurrent){
-            errState = ERR_OVERCURRENT;
-            speed = 0;
-            run = false;
+          if(currentValidDelay) currentValidDelay--;
+          if(currentValidDelay == 0){
+            if(mr->m->dc_current > mr->d->normalMaxCurrent){
+              SET_ERR(errState,ERR_OVERCURRENT);
+              speed = 0;
+              run = false;
+            }
           }
-         mr->d->max_working_current = (mr->d->max_working_current>mr->m->dc_current)?mr->d->max_working_current:mr->m->dc_current;
+          mr->d->max_working_current = (mr->d->max_working_current>mr->m->dc_current)?mr->d->max_working_current:mr->m->dc_current;
           checkCycle--;
           if(checkCycle == 0){
             checkCycle = moduleParam.doorConfig.angleValidCycles;
             int16_t diff = mr->m->angle - lastPos;
             if(diff < 0) diff *= -1;
             
-            if(diff < moduleParam.doorConfig.angleValidDeg){
-              //lockedCount++;
-              speed = 0;
-              errState = ERR_LOCKED;
-            }
+//            if(speed != 0){
+              if(diff < validAngle  && mr->m->angle > validAngle){
+//              if(diff < moduleParam.doorConfig.angleValidDeg){
+                //lockedCount++;
+                speed = 0;
+                SET_ERR(errState,ERR_LOCKED);
+              }
+//            }
             lastPos = mr->m->angle;
           }
         }       
@@ -771,7 +796,7 @@ static THD_FUNCTION(procMotorTimeRun,p)
     
     // valid for current
     if(mr->m->dc_current > mr->d->normalMaxCurrent){
-      errState = ERR_OVERCURRENT;
+      SET_ERR(errState,ERR_OVERCURRENT);
       speed = 0;
     }else{
       mr->d->max_working_current = mr->m->dc_current;
@@ -839,7 +864,8 @@ static THD_FUNCTION(procMotorFollowRun,p)
   mr->m->inPos = false;
   bool emgZero = false;
   bool masterLocked = false;
-  uint8_t inpValidCycle = moduleParam.doorConfig.actionDelay;
+  uint8_t inpValidCycle = moduleParam.doorConfig.actionDelay<<1;
+  int16_t validAngle;
   while(run){
     eventmask_t evt = chEvtWaitAnyTimeout(ALL_EVENTS,TIME_IMMEDIATE);
     if(evt & EV_ABORT_OC){
@@ -857,10 +883,14 @@ static THD_FUNCTION(procMotorFollowRun,p)
     // valid for speed
     int16_t diff_fow;
     if(mr->actType == ACT_OPEN){
-      if(mr->m->angle > mr->d->sldOpenAngle)
+      if(mr->m->angle > mr->d->sldOpenAngle){
         speed = mr->d->slowSpeed;
-      else
+        validAngle = moduleParam.doorConfig.angleValidDeg>>2;
+      }
+      else{
         speed = mr->d->normalSpeed;
+        validAngle = moduleParam.doorConfig.angleValidDeg;
+      }
       // valid track target
       if(!mr->mf->inPos){
         if(mr->mf->angle < moduleParam.doorConfig.doorFreeAngle){
@@ -891,18 +921,21 @@ static THD_FUNCTION(procMotorFollowRun,p)
     }else{ // close
       if(mr->m->angle < mr->d->sldCloseAngle){
         speed = mr->d->slowSpeed;
+        validAngle = moduleParam.doorConfig.angleValidDeg >> 2;
       }
       else{
         speed = mr->d->normalSpeed;
+        validAngle = moduleParam.doorConfig.angleValidDeg;
       }
       // valid track target
-      if(!mr->mf->inPos){
+      if(!mr->mf->inPos && mr->mf->angle > moduleParam.doorConfig.doorFreeAngle){
           diff_fow = mr->m->angle - mr->mf->angle;
           if(diff_fow < 0){
             //masterLocked = true;
             speed = 1;
           }
-          else{
+          else
+          {
             if(diff_fow < moduleParam.doorConfig.angleDiff){
               speed >>= 1;
             }
@@ -930,19 +963,39 @@ static THD_FUNCTION(procMotorFollowRun,p)
       }
         
       if(mr->stopType & ST_HOME){
-        if(mr->m->inhome){
-          speed = 0;
-          emgZero = true;
-          mr->m->inPos = true;
-          run = false;
-        }
-        else if(mr->m->angle < mr->d->zero_angle_error){
-          if(inpValidCycle) inpValidCycle--;
-          if(inpValidCycle == 0){
-            errState = ERR_INPOSITION;
+        if(mr->m->orgFound){
+          if(mr->m->inhome || (mr->m->angle < mr->d->zero_angle_error)){
+            if(mr->m->inhome){
+              speed = 0;
+              emgZero = true;
+              mr->m->inPos = true;
+              run = false;
+            }else{
+              // add short delay here
+              if(inpValidCycle) inpValidCycle--;
+              if(inpValidCycle == 0){
+                speed = 0;
+                emgZero = true;
+                mr->m->inPos = true;
+                run = false;
+              }
+            }
+          }
+        }else{
+          if(mr->m->inhome){
+            speed = 0;
+            emgZero = true;
+            mr->m->inPos = true;
             run = false;
           }
         }
+//        else if(mr->m->orgFound && (mr->m->angle < mr->d->zero_angle_error)){
+//          if(inpValidCycle) inpValidCycle--;
+//          if(inpValidCycle == 0){
+//            SET_ERR(errState , ERR_INPOSITION);
+//            run = false;
+//          }
+//        }
       }
     }
     
@@ -958,7 +1011,7 @@ static THD_FUNCTION(procMotorFollowRun,p)
           
           if(currentValidDelay == 0){
             if(mr->m->dc_current > mr->d->normalMaxCurrent){
-              errState = ERR_OVERCURRENT;
+              SET_ERR(errState , ERR_OVERCURRENT);
               speed = 0;
               run = false;
             }
@@ -968,10 +1021,11 @@ static THD_FUNCTION(procMotorFollowRun,p)
               checkCycle = moduleParam.doorConfig.angleValidCycles;
               int16_t diff = mr->m->angle - lastPos;
               if(diff < 0) diff *= -1;
-              
-              if(diff < moduleParam.doorConfig.angleValidDeg){
-                speed = 0;
-                errState = ERR_LOCKED;
+              if(speed != 0 && mr->m->angle > validAngle){
+                if(diff < validAngle){
+                  speed = 0;
+                  SET_ERR(errState , ERR_LOCKED);
+                }
               }
               lastPos = mr->m->angle;
             }
@@ -1074,6 +1128,9 @@ static THD_FUNCTION(procDoorOpen ,p)
   
   uint8_t enMask = 0x3;
   t1 = t2 = t3 = NULL;
+  if(mr1.m->angle > mr1.d->zero_angle_error || !mr1.m->inhome)
+    stage = 1;
+
   while(run){
     if(chThdShouldTerminateX()){
       run = false;
@@ -1113,8 +1170,8 @@ static THD_FUNCTION(procDoorOpen ,p)
         }
         if(state == 0x03){ // thread stopped
           // release memory
-          chThdWait(t1);
-          chThdWait(t3);          
+          chThdWait(t1); t1 = NULL;
+          chThdWait(t3); t3 = NULL;         
           // check lock state
           uint8_t mel = mr3.m->mel->read(mr3.m->mel);
           uint8_t pel = mr3.m->pel->read(mr3.m->pel);
@@ -1190,15 +1247,15 @@ static THD_FUNCTION(procDoorOpen ,p)
           if(r1 != MSG_OK){
             // terminate r2
             if(t2 != NULL){
-              if(r1 == ERR_LOCKED)
+              if(IS_ERR(r1 , ERR_LOCKED))
                 chEvtSignal(t2,EV_ABORT_LOCK);
-              else if(r1 == ERR_OVERCURRENT)
+              else if(IS_ERR(r1 , ERR_OVERCURRENT))
                 chEvtSignal(t2,EV_ABORT_OC);
               // wait t2
               chThdWait(t2);
             }
             chThdWait(t1);
-            SET_ERR(errorState,r1);
+            errorState=r1;
             run = false;
           }
           break;
@@ -1207,16 +1264,16 @@ static THD_FUNCTION(procDoorOpen ,p)
           if(r2 != MSG_OK){
             // terminate t1
             if(t1 != NULL){
-              if(r2 == ERR_LOCKED)
+              if(IS_ERR(r2 , ERR_LOCKED))
                 chEvtSignal(t1,EV_ABORT_LOCK);
-              else if(r1 == ERR_OVERCURRENT)
+              else if(IS_ERR(r1 , ERR_OVERCURRENT))
                 chEvtSignal(t1,EV_ABORT_OC);
               // wait t2
               chThdWait(t1);
             }
             chThdWait(t2);
             //alarm(r2);
-            SET_ERR(errorState,r2);
+            errorState=r2;
             run = false;
           }
           break;
@@ -1226,12 +1283,11 @@ static THD_FUNCTION(procDoorOpen ,p)
           if((r1 == MSG_OK) && (r2 == MSG_OK)){
             run = false;
           }else{
-            if(r1 != MSG_OK){
-              SET_ERR(errorState,r1);
+            errorState = r1 | r2;
+            if(IS_ERR(r1,ERR_LOCKED)){
               moduleParam.door[0].lock_times++;
             }
-            if(r2 != MSG_OK){
-              SET_ERR(errorState,r2);
+            if(IS_ERR(r1,ERR_LOCKED)){
               moduleParam.door[1].lock_times++;
             }
           }
@@ -1342,52 +1398,57 @@ static THD_FUNCTION(procDoorClose ,p)
         switch(state){
         case 0x1: // t1 terminated only
           r1 = t1->u.exitcode;
-          if(r1 != MSG_OK){
+         
+          if(r1 != MSG_OK && r1 != ERR_INPOSITION){
             // terminate r2
             if(appParam.boardID & DUAL_DOOR){
               if(t2 != NULL){
-                if(r1 == ERR_LOCKED)
+                if(IS_ERR(r1, ERR_LOCKED))
                   chEvtSignal(t2,EV_ABORT_LOCK);
-                else if(r1 == ERR_OVERCURRENT)
+                else if(IS_ERR(r1 , ERR_OVERCURRENT))
                   chEvtSignal(t2,EV_ABORT_OC);
                 // wait t2
                 chThdWait(t2);
               }
             }
             chThdWait(t1);
-            SET_ERR(errorState,r1);
+            errorState=r1;
             run = false;
           }
           break;
         case 0x2: // t2 terminated only
           r2 = t2->u.exitcode;
-          if(r2 != MSG_OK){
+          if(r2 != MSG_OK && r2 != ERR_INPOSITION){
             // terminate t1
             if(t1 != NULL){
-              if(r2 == ERR_LOCKED)
+              if(IS_ERR(r2 , ERR_LOCKED))
                 chEvtSignal(t1,EV_ABORT_LOCK);
-              else if(r1 == ERR_OVERCURRENT)
+              else if(IS_ERR(r1 , ERR_OVERCURRENT))
                 chEvtSignal(t1,EV_ABORT_OC);
               // wait t1
               chThdWait(t1);
             }
             chThdWait(t2);
-            SET_ERR(errorState,r2);
+            errorState = r2;
             run = false;
           }
           break;
         case 0x3: // both t1 and t2 terminated
           r1 = t1->u.exitcode;
           r2 = t2->u.exitcode;
+          errorState = r1 | r2;
           if(r1 != MSG_OK){
-            SET_ERR(errorState,r1);
-            moduleParam.door[0].lock_times++;
-            run = false;
+            if(IS_ERR(r1 , ERR_LOCKED) || IS_ERR(r1 , ERR_OVERCURRENT)){
+              moduleParam.door[0].lock_times++;
+              run = false;
+            }
           }
           if(r2 != MSG_OK){
-            SET_ERR(errorState,r2);
-            moduleParam.door[1].lock_times++;
-            run = false;
+//            SET_ERR(errorState,r2);
+            if(IS_ERR(r2 , ERR_LOCKED) || IS_ERR(r2 , ERR_OVERCURRENT)){
+              moduleParam.door[0].lock_times++;
+              run = false;
+            }
           }
           chThdWait(t1);
           chThdWait(t2);
@@ -1453,6 +1514,8 @@ static THD_FUNCTION(procDoorClose ,p)
         motorControlP(false,0,mr1.m,0);
 //        if(appParam.boardID & DUAL_DOOR)
 //          motorControlP(false,0,mr2.m,0);
+      if(!mr1.m->inhome || !mr2.m->inhome)
+        SET_ERR(errorState,ERR_INPOSITION);
       }
       break;
     default: // error handler case
@@ -1465,6 +1528,7 @@ static THD_FUNCTION(procDoorClose ,p)
     chThdSleepMilliseconds(100);
     
   }
+
   chThdExit(errorState);
 }
 
@@ -1505,6 +1569,7 @@ static THD_FUNCTION(procDoorHome ,p)
   uint32_t retry_delay = 0;
   uint32_t last_delay = 0;
   msg_t r1,r2,r3;
+  
   while(run){
     if(chThdShouldTerminateX()){
       run = false;
@@ -1512,11 +1577,37 @@ static THD_FUNCTION(procDoorHome ,p)
     switch(stage){
     case 0:
       if(appParam.boardID & LOCK_ENABLED){ // has lock
-        mr3.actType = ACT_CLOSE;
-        mr3.stopType = ST_MEL;
+//        mr3.actType = ACT_CLOSE;
+//        mr3.stopType = ST_MEL;
+//        mr3.actForce = 0;
+//        mr3.runTime = 200;
+//        mr3.maxSpeed = mr3.d->slowSpeed;
+//        t3 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M3",NORMALPRIO,procMotorTimeRun,&mr3);
+//        // wait thread exit
+//        chThdWait(t3);
+//        uint8_t mel = mr3.m->mel->read(mr3.m->mel);
+//        uint8_t pel = mr3.m->pel->read(mr3.m->pel);
+//        
+//        if((pel ==1) && (mel == 1)){
+//          SET_ERR(appParam.errState , ERR_LOCK_FB_DUAL);
+//        }
+//        else if((pel==0) && (mel == 0)){
+//          SET_ERR(appParam.errState , ERR_LOCK_FB_NONE);
+//        }
+//        else if((pel == 1) && (mel == 0)){ // wrong direction
+//          SET_ERR(appParam.errState , ERR_LOCK_REVERSED);
+//        }    
+//        // todo : add alarm for wrong lock
+//
+//        if(appParam.errState){
+////          alarm(ALM_LOCK);
+//          run = false;
+//          continue;
+//        }
+//        chThdSleepMilliseconds(moduleParam.doorConfig.actionDelay*100);
+        mr3.actType = ACT_OPEN;
+        mr3.stopType = ST_PEL;
         mr3.actForce = 0;
-        mr3.runTime = 200;
-        mr3.maxSpeed = mr3.d->slowSpeed;
         t3 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M3",NORMALPRIO,procMotorTimeRun,&mr3);
         // wait thread exit
         chThdWait(t3);
@@ -1524,42 +1615,19 @@ static THD_FUNCTION(procDoorHome ,p)
         uint8_t pel = mr3.m->pel->read(mr3.m->pel);
         
         if((pel ==1) && (mel == 1)){
-          SET_ERR(appParam.errState , ERR_LOCK_FB_DUAL);
+          SET_ERR(errorState , ERR_LOCK_FB_DUAL);
+//          SET_ERR(errorState , ALM_LOCK);
         }
         else if((pel==0) && (mel == 0)){
-          SET_ERR(appParam.errState , ERR_LOCK_FB_NONE);
-        }
-        else if((pel == 1) && (mel == 0)){ // wrong direction
-          SET_ERR(appParam.errState , ERR_LOCK_REVERSED);
-        }    
-        // todo : add alarm for wrong lock
-
-        if(appParam.errState){
-//          alarm(ALM_LOCK);
-          run = false;
-          continue;
-        }
-        chThdSleepMilliseconds(moduleParam.doorConfig.actionDelay*100);
-        mr3.actType = ACT_OPEN;
-        mr3.stopType = ST_PEL;
-        mr3.actForce = 0;
-        t3 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M3",NORMALPRIO,procMotorTimeRun,&mr3);
-        // wait thread exit
-        chThdWait(t3);
-        mel = mr3.m->mel->read(mr3.m->mel);
-        pel = mr3.m->pel->read(mr3.m->pel);
-        
-        if((pel ==1) && (mel == 1)){
-          SET_ERR(appParam.errState , ERR_LOCK_FB_DUAL);
-        }
-        else if((pel==0) && (mel == 0)){
-          SET_ERR(appParam.errState , ERR_LOCK_FB_NONE);
+          SET_ERR(errorState , ERR_LOCK_FB_NONE);
+//          SET_ERR(errorState , ALM_LOCK);
         }
         else if((pel == 0) && (mel == 1)){ // wrong direction
-          SET_ERR(appParam.errState , ERR_LOCK_REVERSED);
+          SET_ERR(errorState , ERR_LOCK_REVERSED);
+//          SET_ERR(errorState , ALM_LOCK);
         }    
         // todo : add alarm 
-        if(appParam.errState){
+        if(errorState){
 //          alarm(ALM_LOCK);
           run = false;
           continue;
@@ -1580,8 +1648,8 @@ static THD_FUNCTION(procDoorHome ,p)
         r2 = chThdWait(t2);
         if(r2 != MSG_OK){
           run = false;
+          errorState = r2;
           continue;
-          appParam.errState = r2;
         }
       }
       // move m1 home
@@ -1595,12 +1663,12 @@ static THD_FUNCTION(procDoorHome ,p)
       r1 = chThdWait(t1);
       if(r1 != MSG_OK){
         run = false;
+        errorState = r1;
         continue;
-        appParam.errState = r1;
       }
       stage = 1;
       last_delay = moduleParam.doorConfig.actionDelay; // delay 500 ms
-      run = false;
+      //run = false;
       break;
     case 1:
       if(last_delay){
@@ -1620,17 +1688,17 @@ static THD_FUNCTION(procDoorHome ,p)
           uint8_t pel = mr3.m->pel->read(mr3.m->pel);
           
           if((pel ==1) && (mel == 1)){
-            SET_ERR(appParam.errState , ERR_LOCK_FB_DUAL);
+            SET_ERR(errorState , ERR_LOCK_FB_DUAL);
           }
           else if((pel==0) && (mel == 0)){
-            SET_ERR(appParam.errState , ERR_LOCK_FB_NONE);
+            SET_ERR(errorState , ERR_LOCK_FB_NONE);
           }
           else if((pel == 1) && (mel == 0)){ // wrong direction
-            SET_ERR(appParam.errState , ERR_LOCK_REVERSED);
+            SET_ERR(errorState , ERR_LOCK_REVERSED);
           }    
           // todo : add alarm for wrong lock
 
-          if(appParam.errState){
+          if(errorState){
   //          alarm(ALM_LOCK);
             run = false;
             continue;
@@ -1648,8 +1716,8 @@ static THD_FUNCTION(procDoorHome ,p)
     }
     chThdSleepMilliseconds(100);
   }
-  alarm(ALM_LOCK);
-  chThdExit(appParam.errState);
+  //alarm(ALM_LOCK);
+  chThdExit(errorState);
 }
 
 #define EVM_TIMERUN_POS     EVENT_MASK(21)
@@ -1699,7 +1767,14 @@ static msg_t doorOpenCtrl(void)
         run = false;
       }
       else{
-        alarm(ALM_DOOR_BLOCKING);
+        if(IS_ERR(r1,ERR_LOCKED))
+          alarm(ALM_DOOR_BLOCKING);
+        if(IS_ERR(r1,ERR_OVERCURRENT))
+          alarm(ALM_DOOR_OC);
+        if(IS_ERR(r1,ERR_INPOSITION))
+          alarm(ALM_INP);
+        if(IS_ERR(r1,ERR_LOCK_FAIL) || IS_ERR(r1,ERR_LOCK_FB_NONE) || IS_ERR(r1,ERR_LOCK_FB_DUAL))
+          alarm(ALM_LOCK);
         chThdSleepMilliseconds(moduleParam.doorConfig.lockRetryIdleCycles);
         stage = 1;
       }
@@ -1717,7 +1792,14 @@ static msg_t doorOpenCtrl(void)
       if(r2 == MSG_OK){
         stage = 0;
       }else{
-        alarm(ALM_DOOR_BLOCKING);
+        if(IS_ERR(r2,ERR_LOCKED))
+          alarm(ALM_DOOR_BLOCKING);
+        if(IS_ERR(r2,ERR_OVERCURRENT))
+          alarm(ALM_DOOR_OC);
+        if(IS_ERR(r2,ERR_INPOSITION))
+          alarm(ALM_INP);
+        if(IS_ERR(r2,ERR_LOCK_FAIL) || IS_ERR(r2,ERR_LOCK_FB_NONE) || IS_ERR(r2,ERR_LOCK_FB_DUAL))
+          alarm(ALM_LOCK);
       }
       chThdSleepMilliseconds(moduleParam.doorConfig.lockRetryIdleCycles);
       break;
@@ -1750,11 +1832,19 @@ static msg_t doorCloseCtrl(void)
       t1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"DoorOpenProc",NORMALPRIO,procDoorClose,&dir);
       r1 = chThdWait(t1);
       t1 = NULL;
-      if(r1 == MSG_OK){
+      if(r1 == MSG_OK || IS_ERR(r1,ERR_INPOSITION)){
         run = false;
+        if(IS_ERR(r1,ERR_INPOSITION))
+          alarm(ALM_INP);
       }
       else{
-        alarm(ALM_DOOR_BLOCKING);
+        if(IS_ERR(r1,ERR_LOCKED))
+          alarm(ALM_DOOR_BLOCKING);
+        if(IS_ERR(r1,ERR_OVERCURRENT))
+          alarm(ALM_DOOR_OC);
+        if(IS_ERR(r1,ERR_LOCK_FAIL) || IS_ERR(r1,ERR_LOCK_FB_NONE) || IS_ERR(r1,ERR_LOCK_FB_DUAL))
+          alarm(ALM_LOCK);
+        
         chThdSleepMilliseconds(moduleParam.doorConfig.lockRetryIdleCycles);
         stage = 1;
       }
@@ -1772,7 +1862,16 @@ static msg_t doorCloseCtrl(void)
       }
       if(r2 == MSG_OK){
         stage = 0;
-        alarm(ALM_DOOR_BLOCKING);
+        //alarm(ALM_DOOR_BLOCKING);
+      }else{
+        if(IS_ERR(r2,ERR_LOCKED))
+          alarm(ALM_DOOR_BLOCKING);
+        if(IS_ERR(r2,ERR_OVERCURRENT))
+          alarm(ALM_DOOR_OC);
+        if(IS_ERR(r2,ERR_INPOSITION))
+          alarm(ALM_INP);
+        if(IS_ERR(r2,ERR_LOCK_FAIL) || IS_ERR(r2,ERR_LOCK_FB_NONE) || IS_ERR(r2,ERR_LOCK_FB_DUAL))
+          alarm(ALM_LOCK);
       }
       chThdSleepMilliseconds(moduleParam.doorConfig.lockRetryIdleCycles);
       break;
@@ -1800,6 +1899,7 @@ static THD_FUNCTION(procDoorControl ,p)
   _door_config_t *d2 = &moduleParam.door[1];
   _door_config_t *d3 = &moduleParam.door[2];
   uint32_t dir;
+  msg_t ret;
 
   motorControlP(false,DIR_POS,m1,0);
   motorControlP(false,DIR_POS,m2,0);
@@ -1826,9 +1926,17 @@ static THD_FUNCTION(procDoorControl ,p)
 
   thread_t *thread_m1 = NULL, *thread_m2 = NULL;
   thread_m1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"PROC_HOME",NORMALPRIO,procDoorHome,NULL);
-  chThdWait(thread_m1);
+  ret = chThdWait(thread_m1);
   thread_m1 = NULL;
+  if(ret != MSG_OK){
+    if(IS_ERR(ret,ERR_LOCK_FAIL) || IS_ERR(ret,ERR_LOCK_FB_NONE) || IS_ERR(ret,ERR_LOCK_FB_DUAL))
+      alarm(ALM_LOCK);
+    chThdExit((msg_t)-1);
+  }
 
+  appParam.doorState[0].idle_current = appParam.doorState[0].op_current;
+  appParam.doorState[1].idle_current = appParam.doorState[1].op_current;
+  
   do_map[DOOR_OPEN_DONE].clear(&do_map[DOOR_OPEN_DONE]);
 //  thread_m1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"MOTOR_M3",NORMALPRIO,procDoorClose,&dir);
 //  chThdWait(thread_m1);
@@ -2012,7 +2120,7 @@ static THD_FUNCTION(procDoorControl ,p)
           break;
         case 8: // 副門開/關門減速位置
           d2->sldOpenAngle = m2->angle;
-          d2->sldCloseAngle = d1->openAngle - d1->sldOpenAngle;
+          d2->sldCloseAngle = d2->openAngle - d2->sldOpenAngle;
           //d2->sldOpenAngle = m2->angle;
           sysSaveParams();
           set_beep(250,250,1);
@@ -2149,6 +2257,14 @@ void main(void)
   extChannelEnable(&EXTD1,6);
   extChannelEnable(&EXTD1,13);
   
+  uint16_t period;
+  if((moduleParam.doorConfig.freq1 < 600) || (moduleParam.doorConfig.freq1 > 2000))
+    period = 820;
+  else  
+    period = moduleParam.doorConfig.freq1;
+  
+  pwmcfg_t4.period = period;
+  pwmcfg_t5.period = period;
   pwmStart(&PWMD4, &pwmcfg_t4);
   pwmStart(&PWMD5, &pwmcfg_t5);
 
@@ -2187,7 +2303,6 @@ void ang1_int_handler(EXTDriver *extp, expchannel_t channel)
         // error
       }else{
         appParam.icu[0].degree = (appParam.icu[0].percent-10) * moduleParam.doorConfig.degree_percent;
-        appParam.motorConfig[0].inhome = appParam.motorConfig[0].mel->read(appParam.motorConfig[0].mel)==0?1:0;
         if(appParam.motorConfig[0].orgFound){
           if(appParam.boardID & MODEL_DOOR_LEFT){
             appParam.motorConfig[0].angle = iirInsertF(0,-(appParam.icu[0].degree - moduleParam.door[0].zeroAngle));
@@ -2204,6 +2319,7 @@ void ang1_int_handler(EXTDriver *extp, expchannel_t channel)
       appParam.icu[0].period = now - appParam.icu[0].last;
     }
   }
+  appParam.motorConfig[0].inhome = appParam.motorConfig[0].mel->read(appParam.motorConfig[0].mel)==0?1:0;
 }
 
 void ang2_int_handler(EXTDriver *extp, expchannel_t channel)
@@ -2220,7 +2336,6 @@ void ang2_int_handler(EXTDriver *extp, expchannel_t channel)
 
         appParam.icu[1].degree = (appParam.icu[1].percent - 10) * moduleParam.doorConfig.degree_percent;
   //      appParam.icu[1].degree = (appParam.icu[1].percent-10) * 2.75;
-        appParam.motorConfig[1].inhome = appParam.motorConfig[1].mel->read(appParam.motorConfig[1].mel)==0?1:0;
         if(appParam.motorConfig[1].orgFound){
           if(appParam.boardID & MODEL_DOOR_LEFT){
             appParam.motorConfig[1].angle = iirInsertF(1,(appParam.icu[1].degree- moduleParam.door[1].zeroAngle));
@@ -2237,7 +2352,7 @@ void ang2_int_handler(EXTDriver *extp, expchannel_t channel)
       appParam.icu[1].period = now - appParam.icu[1].last;
     }
   }
-  
+  appParam.motorConfig[1].inhome = appParam.motorConfig[1].mel->read(appParam.motorConfig[1].mel)==0?1:0;
 }
 
 void tg1_int_handler(EXTDriver *extp, expchannel_t channel)
@@ -2395,7 +2510,7 @@ void reset_buzzer(void)
 //      chThdWait(thread_m1);
 //      thread_m1 = NULL;
 //      do_map[DOOR_OPEN_DONE].set(&do_map[DOOR_OPEN_DONE]);
-//      if(appParam.vr6 == 0){
+//      if(appParam. == 0){
 //        evt |= EV_TG2_TRIGGER;
 //      }else{
 //        chVTSet(&vt_door_close,S2ST(appParam.vr6),door_close_cb,NULL);

@@ -12,7 +12,7 @@ typedef struct{
   
 extern mb_reg_map_t mb_reg_map_func[];
 //#define NOF_REG_FUNC    sizeof(mb_reg_map_func)/sizeof(mb_reg_map_t)
-#define NOF_REG_FUNC    2
+#define NOF_REG_FUNC    3
 void mapMBWord(uint8_t *dptr, uint8_t *val);
 void mapMBFloat(uint8_t *dptr, uint8_t *val);
 

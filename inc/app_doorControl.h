@@ -6,8 +6,8 @@
 #include "rsi_bt_common.h"
 #include "rsi_bt_config.h"
 
-#define VERSION 0x2004
-#define VERSION_2       0x0430
+#define VERSION 0x2009
+#define VERSION_2       0x0401
 
 typedef void (*rsi_interrupt_cb)(void);
 typedef void (*lora_interrupt_cb)(void *);
@@ -85,15 +85,14 @@ enum beep_map{
 };
 
 enum {
-  ERR_NONE,
   ERR_LOCKED,
   ERR_OVERCURRENT,
   ERR_INPOSITION,
-  ERR_LOCK_FAIL,
+  ERR_LOCK_FAIL=4,
   ERR_LOCK_FB_NONE,
   ERR_LOCK_FB_DUAL,
   ERR_LOCK_REVERSED,
-  ERR_TIMEOUT
+  ERR_TIMEOUT=8
 };
 
 enum alarm_code{
@@ -101,10 +100,12 @@ enum alarm_code{
   ALM_DOOR_BLOCKING,
   ALM_DOOR_OC,
   ALM_LOCK,
+  ALM_INP
 };
 
 #define SET_ERR(b,x)            (b |= (1<<x))
 #define CLR_ERR(b,x)            (b &= ~(1<<x))
+#define IS_ERR(b,x)             (b & (1<<x))
 
 #define ERR_M1_CURRENT  0x01
 #define ERR_M2_CURRENT  0x02
@@ -204,6 +205,7 @@ typedef struct{
 }_icu_value_t;
 
 typedef struct{
+  uint16_t idle_current;
   uint16_t op_current;
   uint16_t max_current;
   uint32_t lockTimes;
