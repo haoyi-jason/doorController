@@ -275,7 +275,7 @@ static const ADCConversionGroup adcgrpcfg = {
   0,
   ADC_CR2_SWSTART,
   0,
-  ADC_SMPR2_SMP_AN0(ADC_SAMPLE_3) | ADC_SMPR2_SMP_AN1(ADC_SAMPLE_3)| ADC_SMPR2_SMP_AN2(ADC_SAMPLE_3),
+  ADC_SMPR2_SMP_AN0(ADC_SAMPLE_28) | ADC_SMPR2_SMP_AN1(ADC_SAMPLE_28)| ADC_SMPR2_SMP_AN2(ADC_SAMPLE_28),
   ADC_SQR1_NUM_CH(ADC_GRP1_NUM_CHANNELS),
   0,
   ADC_SQR3_SQ1_N(ADC_CHANNEL_IN0) | ADC_SQR3_SQ2_N(ADC_CHANNEL_IN1) | ADC_SQR3_SQ3_N(ADC_CHANNEL_IN6)
@@ -1128,7 +1128,7 @@ static THD_FUNCTION(procDoorOpen ,p)
   
   uint8_t enMask = 0x3;
   t1 = t2 = t3 = NULL;
-  if(mr1.m->angle > mr1.d->zero_angle_error || !mr1.m->inhome)
+  if((mr1.m->angle > mr1.d->zero_angle_error) || !mr1.m->inhome)
     stage = 1;
 
   while(run){
@@ -1137,25 +1137,25 @@ static THD_FUNCTION(procDoorOpen ,p)
     }
     switch(stage){
     case 0:
-      mr1.runTime = mr1.d->openRevTime*100;
-      mr1.actType = ACT_CLOSE;
-      mr1.stopType = ST_POSITION;
-      mr1.actForce = 0;
-      mr1.maxSpeed = mr1.d->slowSpeed;
-      mr1.maxSpeed = moduleParam.door[0].openRevSpeed;
       //開門壓門
       if(t1 == NULL){
+        mr1.runTime = mr1.d->openRevTime*100;
+        mr1.actType = ACT_CLOSE;
+        mr1.stopType = ST_POSITION;
+        mr1.actForce = 0;
+        //mr1.maxSpeed = mr1.d->slowSpeed;
+        mr1.maxSpeed = moduleParam.door[0].openRevSpeed;
         t1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M1",NORMALPRIO,procMotorTimeRun,&mr1);
       }
       chThdSleepMilliseconds(100);
-      // 釋放電鎖
-      mr3.runTime = moduleParam.doorConfig.lockActiveTime*100;
-      mr3.actType = ACT_OPEN;
-      mr3.stopType = ST_PEL;
-//      mr3.actForce = mr3.d->normalSpeed>>1;
-      mr3.actForce = 0;
-      mr3.maxSpeed = mr3.d->normalSpeed;
       if(t3 == NULL){ // create working thread if not running
+        // 釋放電鎖
+        mr3.runTime = moduleParam.doorConfig.lockActiveTime*100;
+        mr3.actType = ACT_OPEN;
+        mr3.stopType = ST_PEL;
+  //      mr3.actForce = mr3.d->normalSpeed>>1;
+        mr3.actForce = 0;
+        mr3.maxSpeed = mr3.d->normalSpeed;
         t3 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M3",NORMALPRIO,procMotorTimeRun,&mr3);
         loopCount = 0;
       }
@@ -1164,6 +1164,8 @@ static THD_FUNCTION(procDoorOpen ,p)
         uint8_t state = 0x0;
         if(t1->state == 0xf) state |= 0x1;
         if(t3->state == 0xf) state |= 0x2;
+        
+        // todo: check if set timeout as parameter
         if(loopCount > 200){
           SET_ERR(errorState,ERR_TIMEOUT);
           run = false;
@@ -1190,9 +1192,9 @@ static THD_FUNCTION(procDoorOpen ,p)
           }else{
             t1 = NULL;
             t2 = NULL;
-            stage = 1;
             validLoop.enMask = 0x3;
             retry_delay = moduleParam.doorConfig.actionDelay;
+            stage = 1;
           }          
         }
       }
@@ -1201,28 +1203,28 @@ static THD_FUNCTION(procDoorOpen ,p)
       if(retry_delay){
         retry_delay--;
       }else{
-        mr1.actType = ACT_OPEN; 
-        mr1.actForce = 0;
-        mr1.actTime = 0;
-        mr1.stopType = ST_POSITION;
-        mr1.maxSpeed = mr1.d->normalSpeed;
-        
-        mr2.actType = ACT_OPEN;
-        mr2.stopType = ST_POSITION;
-        mr2.actForce = 0;
-        mr2.actTime = 0;
-        mr2.maxSpeed = mr2.d->normalSpeed;
-        
+                
         uint8_t state = 0;
         
         if(appParam.boardID & DUAL_DOOR){
           if(t1 == NULL){
+            mr1.actType = ACT_OPEN; 
+            mr1.actForce = 0;
+            mr1.actTime = 0;
+            mr1.stopType = ST_POSITION;
+            mr1.maxSpeed = mr1.d->normalSpeed;
             t1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M1",NORMALPRIO,procMotorPosRun,&mr1);
           }
           else{
             if(t1->state == 0xf) state |= 0x1;
           }
+          
           if(t2 == NULL){
+            mr2.actType = ACT_OPEN;
+            mr2.stopType = ST_POSITION;
+            mr2.actForce = 0;
+            mr2.actTime = 0;
+            mr2.maxSpeed = mr2.d->normalSpeed;
             // stop m3 if running
             if(mr3.m->running){
               motorControlP(false,0,mr3.m,0);
@@ -1232,71 +1234,85 @@ static THD_FUNCTION(procDoorOpen ,p)
           else{
             if(t2->state == 0xf) state |= 0x2;
           }
+          
+          switch(state){
+          case 1: // only t1 stopped
+            r1 = t1->u.exitcode;
+            if(r1 != MSG_OK){
+              // terminate r2
+              if(t2 != NULL){
+                if(IS_ERR(r1 , ERR_LOCKED))
+                  chEvtSignal(t2,EV_ABORT_LOCK);
+                else if(IS_ERR(r1 , ERR_OVERCURRENT))
+                  chEvtSignal(t2,EV_ABORT_OC);
+                // wait t2
+                chThdWait(t2);
+              }
+              chThdWait(t1);
+              errorState=r1;
+              run = false;
+            }
+            break;
+          case 2: // only t2 stopped
+            r2 = t2->u.exitcode;
+            if(r2 != MSG_OK){
+              // terminate t1
+              if(t1 != NULL){
+                if(IS_ERR(r2 , ERR_LOCKED))
+                  chEvtSignal(t1,EV_ABORT_LOCK);
+                else if(IS_ERR(r1 , ERR_OVERCURRENT))
+                  chEvtSignal(t1,EV_ABORT_OC);
+                // wait t2
+                chThdWait(t1);
+              }
+              chThdWait(t2);
+              //alarm(r2);
+              errorState=r2;
+              run = false;
+            }
+            break;
+          case 3: // both t1 and t2 stopped
+            r1 = t1->u.exitcode;
+            r2 = t2->u.exitcode;
+            if((r1 == MSG_OK) && (r2 == MSG_OK)){
+              run = false;
+            }else{
+              errorState = r1 | r2;
+              if(IS_ERR(r1,ERR_LOCKED)){
+                moduleParam.door[0].lock_times++;
+              }
+              if(IS_ERR(r1,ERR_LOCKED)){
+                moduleParam.door[1].lock_times++;
+              }
+            }
+            chThdWait(t1);
+            chThdWait(t2);
+            run = false;
+            break;
+          default:break;
+          }        
         }else{
           if(t1 == NULL){
+            mr1.actType = ACT_OPEN; 
+            mr1.actForce = 0;
+            mr1.actTime = 0;
+            mr1.stopType = ST_POSITION;
+            mr1.maxSpeed = mr1.d->normalSpeed;
             t1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M1",NORMALPRIO,procMotorPosRun,&mr1);
           }
           else{
             if(t1->state == 0xf) state |= 0x1;
           }
+          if(state == 0x1){
+            r1 = t1->u.exitcode;
+            chThdWait(t1);
+            if(r1 != MSG_OK){
+              errorState=r1;
+            }
+            run = false;
+          }
         }
         
-        switch(state){
-        case 1: // only t1 stopped
-          r1 = t1->u.exitcode;
-          if(r1 != MSG_OK){
-            // terminate r2
-            if(t2 != NULL){
-              if(IS_ERR(r1 , ERR_LOCKED))
-                chEvtSignal(t2,EV_ABORT_LOCK);
-              else if(IS_ERR(r1 , ERR_OVERCURRENT))
-                chEvtSignal(t2,EV_ABORT_OC);
-              // wait t2
-              chThdWait(t2);
-            }
-            chThdWait(t1);
-            errorState=r1;
-            run = false;
-          }
-          break;
-        case 2: // only t2 stopped
-          r2 = t2->u.exitcode;
-          if(r2 != MSG_OK){
-            // terminate t1
-            if(t1 != NULL){
-              if(IS_ERR(r2 , ERR_LOCKED))
-                chEvtSignal(t1,EV_ABORT_LOCK);
-              else if(IS_ERR(r1 , ERR_OVERCURRENT))
-                chEvtSignal(t1,EV_ABORT_OC);
-              // wait t2
-              chThdWait(t1);
-            }
-            chThdWait(t2);
-            //alarm(r2);
-            errorState=r2;
-            run = false;
-          }
-          break;
-        case 3: // both t1 and t2 stopped
-          r1 = t1->u.exitcode;
-          r2 = t2->u.exitcode;
-          if((r1 == MSG_OK) && (r2 == MSG_OK)){
-            run = false;
-          }else{
-            errorState = r1 | r2;
-            if(IS_ERR(r1,ERR_LOCKED)){
-              moduleParam.door[0].lock_times++;
-            }
-            if(IS_ERR(r1,ERR_LOCKED)){
-              moduleParam.door[1].lock_times++;
-            }
-          }
-          chThdWait(t1);
-          chThdWait(t2);
-          run = false;
-          break;
-        default:break;
-        }        
 
         }
       break;
@@ -1363,99 +1379,114 @@ static THD_FUNCTION(procDoorClose ,p)
       if(retry_delay){
         retry_delay--;
       }else{
-        mr2.actType = ACT_CLOSE;
-        mr2.stopType = ST_HOME;
-        mr2.actForce = moduleParam.door[1].closeFwdSpeed;
-        mr2.maxSpeed = mr2.d->normalSpeed;
-        mr1.actType = ACT_CLOSE;
-        mr1.stopType = ST_HOME;
-        mr1.actForce = moduleParam.door[0].closeFwdSpeed;
-        mr1.actTime = 0;
-        mr1.maxSpeed = mr1.d->normalSpeed;
         uint8_t state = 0x0;
         if(appParam.boardID & DUAL_DOOR){
           if(t1 == NULL){
+            mr1.actType = ACT_CLOSE;
+            mr1.stopType = ST_HOME;
+            mr1.actForce = moduleParam.door[0].closeFwdSpeed;
+            mr1.actTime = 0;
+            mr1.maxSpeed = mr1.d->normalSpeed;
             t1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M1",NORMALPRIO,procMotorFollowRun,&mr1);
           }
           else{
             if(t1->state == 0xf) state |= 0x1;
           }
           if(t2 == NULL){
+            mr2.actType = ACT_CLOSE;
+            mr2.stopType = ST_HOME;
+            mr2.actForce = moduleParam.door[1].closeFwdSpeed;
+            mr2.maxSpeed = mr2.d->normalSpeed;
             t2 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M2",NORMALPRIO,procMotorPosRun,&mr2);
           }
           else{
             if(t2->state == 0xf) state |= 0x2;
           }
+          switch(state){
+          case 0x1: // t1 terminated only
+            r1 = t1->u.exitcode;
+           
+            if(r1 != MSG_OK && r1 != ERR_INPOSITION){
+              // terminate r2
+              if(appParam.boardID & DUAL_DOOR){
+                if(t2 != NULL){
+                  if(IS_ERR(r1, ERR_LOCKED))
+                    chEvtSignal(t2,EV_ABORT_LOCK);
+                  else if(IS_ERR(r1 , ERR_OVERCURRENT))
+                    chEvtSignal(t2,EV_ABORT_OC);
+                  // wait t2
+                  chThdWait(t2);
+                }
+              }
+              chThdWait(t1);
+              errorState=r1;
+              run = false;
+            }
+            break;
+          case 0x2: // t2 terminated only
+            r2 = t2->u.exitcode;
+            if(r2 != MSG_OK && r2 != ERR_INPOSITION){
+              // terminate t1
+              if(t1 != NULL){
+                if(IS_ERR(r2 , ERR_LOCKED))
+                  chEvtSignal(t1,EV_ABORT_LOCK);
+                else if(IS_ERR(r1 , ERR_OVERCURRENT))
+                  chEvtSignal(t1,EV_ABORT_OC);
+                // wait t1
+                chThdWait(t1);
+              }
+              chThdWait(t2);
+              errorState = r2;
+              run = false;
+            }
+            break;
+          case 0x3: // both t1 and t2 terminated
+            r1 = t1->u.exitcode;
+            r2 = t2->u.exitcode;
+            errorState = r1 | r2;
+            if(r1 != MSG_OK){
+              if(IS_ERR(r1 , ERR_LOCKED) || IS_ERR(r1 , ERR_OVERCURRENT)){
+                moduleParam.door[0].lock_times++;
+                run = false;
+              }
+            }
+            if(r2 != MSG_OK){
+  //            SET_ERR(errorState,r2);
+              if(IS_ERR(r2 , ERR_LOCKED) || IS_ERR(r2 , ERR_OVERCURRENT)){
+                moduleParam.door[0].lock_times++;
+                run = false;
+              }
+            }
+            chThdWait(t1);
+            chThdWait(t2);
+            stage = 1;
+            retry_delay = moduleParam.doorConfig.actionDelay;
+            break;
+          default:break;
+          }
         }
         else{
           if(t1 == NULL){
+            mr1.actType = ACT_CLOSE;
+            mr1.stopType = ST_HOME;
+            mr1.actForce = moduleParam.door[0].closeFwdSpeed;
+            mr1.actTime = 0;
+            mr1.maxSpeed = mr1.d->normalSpeed;
             t1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M1",NORMALPRIO,procMotorFollowRun,&mr1);
           }
           else{
             if(t1->state == 0xf) state |= 0x1;
           }
-        }
-        switch(state){
-        case 0x1: // t1 terminated only
-          r1 = t1->u.exitcode;
-         
-          if(r1 != MSG_OK && r1 != ERR_INPOSITION){
-            // terminate r2
-            if(appParam.boardID & DUAL_DOOR){
-              if(t2 != NULL){
-                if(IS_ERR(r1, ERR_LOCKED))
-                  chEvtSignal(t2,EV_ABORT_LOCK);
-                else if(IS_ERR(r1 , ERR_OVERCURRENT))
-                  chEvtSignal(t2,EV_ABORT_OC);
-                // wait t2
-                chThdWait(t2);
-              }
-            }
+          if(state == 0x1){
             chThdWait(t1);
-            errorState=r1;
-            run = false;
-          }
-          break;
-        case 0x2: // t2 terminated only
-          r2 = t2->u.exitcode;
-          if(r2 != MSG_OK && r2 != ERR_INPOSITION){
-            // terminate t1
-            if(t1 != NULL){
-              if(IS_ERR(r2 , ERR_LOCKED))
-                chEvtSignal(t1,EV_ABORT_LOCK);
-              else if(IS_ERR(r1 , ERR_OVERCURRENT))
-                chEvtSignal(t1,EV_ABORT_OC);
-              // wait t1
-              chThdWait(t1);
-            }
-            chThdWait(t2);
-            errorState = r2;
-            run = false;
-          }
-          break;
-        case 0x3: // both t1 and t2 terminated
-          r1 = t1->u.exitcode;
-          r2 = t2->u.exitcode;
-          errorState = r1 | r2;
-          if(r1 != MSG_OK){
-            if(IS_ERR(r1 , ERR_LOCKED) || IS_ERR(r1 , ERR_OVERCURRENT)){
-              moduleParam.door[0].lock_times++;
+            if(r1 != MSG_OK){
+              errorState=r1;
               run = false;
             }
-          }
-          if(r2 != MSG_OK){
-//            SET_ERR(errorState,r2);
-            if(IS_ERR(r2 , ERR_LOCKED) || IS_ERR(r2 , ERR_OVERCURRENT)){
-              moduleParam.door[0].lock_times++;
-              run = false;
+            else{
+              stage = 1;
             }
           }
-          chThdWait(t1);
-          chThdWait(t2);
-          stage = 1;
-          retry_delay = moduleParam.doorConfig.actionDelay;
-          break;
-        default:break;
         }
         
       }
@@ -1577,34 +1608,6 @@ static THD_FUNCTION(procDoorHome ,p)
     switch(stage){
     case 0:
       if(appParam.boardID & LOCK_ENABLED){ // has lock
-//        mr3.actType = ACT_CLOSE;
-//        mr3.stopType = ST_MEL;
-//        mr3.actForce = 0;
-//        mr3.runTime = 200;
-//        mr3.maxSpeed = mr3.d->slowSpeed;
-//        t3 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M3",NORMALPRIO,procMotorTimeRun,&mr3);
-//        // wait thread exit
-//        chThdWait(t3);
-//        uint8_t mel = mr3.m->mel->read(mr3.m->mel);
-//        uint8_t pel = mr3.m->pel->read(mr3.m->pel);
-//        
-//        if((pel ==1) && (mel == 1)){
-//          SET_ERR(appParam.errState , ERR_LOCK_FB_DUAL);
-//        }
-//        else if((pel==0) && (mel == 0)){
-//          SET_ERR(appParam.errState , ERR_LOCK_FB_NONE);
-//        }
-//        else if((pel == 1) && (mel == 0)){ // wrong direction
-//          SET_ERR(appParam.errState , ERR_LOCK_REVERSED);
-//        }    
-//        // todo : add alarm for wrong lock
-//
-//        if(appParam.errState){
-////          alarm(ALM_LOCK);
-//          run = false;
-//          continue;
-//        }
-//        chThdSleepMilliseconds(moduleParam.doorConfig.actionDelay*100);
         mr3.actType = ACT_OPEN;
         mr3.stopType = ST_PEL;
         mr3.actForce = 0;
@@ -1763,6 +1766,7 @@ static msg_t doorOpenCtrl(void)
       t1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"DoorOpenProc",NORMALPRIO,procDoorOpen,&dir);
       r1 = chThdWait(t1);
       t1 = NULL;
+      appParam.errState = r1;
       if(r1 == MSG_OK){
         run = false;
       }
@@ -1784,6 +1788,7 @@ static msg_t doorOpenCtrl(void)
       // close door and reopen
       t2 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"DoorCloseProc",NORMALPRIO,procDoorClose,&dir);
       r2 = chThdWait(t2);
+      appParam.errState = r2;
       t2 = NULL;
       retry++;
       if(retry > moduleParam.doorConfig.lockRetry){
@@ -1928,6 +1933,7 @@ static THD_FUNCTION(procDoorControl ,p)
   thread_m1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"PROC_HOME",NORMALPRIO,procDoorHome,NULL);
   ret = chThdWait(thread_m1);
   thread_m1 = NULL;
+  appParam.errState = ret;
   if(ret != MSG_OK){
     if(IS_ERR(ret,ERR_LOCK_FAIL) || IS_ERR(ret,ERR_LOCK_FB_NONE) || IS_ERR(ret,ERR_LOCK_FB_DUAL))
       alarm(ALM_LOCK);

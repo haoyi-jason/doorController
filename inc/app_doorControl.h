@@ -7,7 +7,7 @@
 #include "rsi_bt_config.h"
 
 #define VERSION 0x2009
-#define VERSION_2       0x0401
+#define VERSION_2       0x1501
 
 typedef void (*rsi_interrupt_cb)(void);
 typedef void (*lora_interrupt_cb)(void *);
