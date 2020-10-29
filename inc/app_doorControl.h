@@ -6,8 +6,8 @@
 #include "rsi_bt_common.h"
 #include "rsi_bt_config.h"
 
-#define VERSION 0x2009
-#define VERSION_2       0x1501
+#define VERSION 0x2010
+#define VERSION_2       0x2101
 
 typedef void (*rsi_interrupt_cb)(void);
 typedef void (*lora_interrupt_cb)(void *);
@@ -64,7 +64,9 @@ enum di_map{
   DOOR2_INP,
   ANG1_ICP,
   ANG2_ICP,
-  USR_BTN
+  USR_BTN,
+  TG1,
+  TG2
 };
 
 enum motor_map{
@@ -188,6 +190,8 @@ typedef struct {
   uint8_t posDir;
   uint8_t negDir;
   uint8_t orgFound;
+  uint8_t newSpeed;
+  uint8_t newDir;
 }_motor_config_t;
 
 typedef struct{
@@ -274,6 +278,7 @@ typedef struct{
   sd_buffer_t sdBuffer;
   buffer_t rxBuf,txBuf;
   uint16_t errState;
+  uint8_t closeByTimeout;
 }_appParam_t;
 
 extern _appParam_t appParam;

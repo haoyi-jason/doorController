@@ -11,7 +11,7 @@ EEP_HEADING revision
 */
 
 
-#define EEP_HEADING              0x45503032
+#define EEP_HEADING              0x45503033
 #define EEP_STORE_OFFSET        0x100
 
 typedef enum{
