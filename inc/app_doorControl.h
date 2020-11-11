@@ -22,6 +22,7 @@ typedef void (*lora_interrupt_cb)(void *);
 #define EV_CLIENT_CONNECT   EVENT_MASK(7)
 #define EV_CLIENT_DISCONNECT   EVENT_MASK(8)
 #define EV_CMD_RX   EVENT_MASK(9)
+#define EV_TG1_MBTRG   EVENT_MASK(10)
 
 #define EV_SYS_CLEAR_ERROR EVENT_MASK(29)
 #define EV_SYS_RESET EVENT_MASK(30)
@@ -279,6 +280,7 @@ typedef struct{
   buffer_t rxBuf,txBuf;
   uint16_t errState;
   uint8_t closeByTimeout;
+  uint8_t openTimes;
 }_appParam_t;
 
 extern _appParam_t appParam;

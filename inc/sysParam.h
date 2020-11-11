@@ -13,6 +13,7 @@ EEP_HEADING revision
 
 #define EEP_HEADING              0x45503033
 #define EEP_STORE_OFFSET        0x100
+#define EEP_OPPARAM_OFFSET        0x400
 
 typedef enum{
   SPAR_NONE,
@@ -103,6 +104,11 @@ typedef struct{
   float zeroAngle;
 }_door_config_t;
 
+typedef struct{
+  uint32_t lock_times[3];
+  uint32_t max_working_current[3];
+  uint32_t openTimes;
+}_op_state_t;
 
 typedef struct module_param_s{
   module_setting_t param;
@@ -117,10 +123,13 @@ typedef struct module_param_s{
   uint16_t ramp;
 }module_params_t;
 
+extern _op_state_t opState;
+
 extern module_params_t moduleParam;
 
 void sysSaveParams(void);
 void sysParamInit(void);
 void defaultParams(void);
+void sysSaveOpstate(void);
 
 #endif

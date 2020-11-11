@@ -98,6 +98,9 @@ int8_t read40000(uint16_t offset, uint8_t *dptr)
   case 30:
     val = appParam.errState;
     break;
+  case 31:
+    val = opState.openTimes + appParam.openTimes;
+    break;
   case 33:
     val = moduleParam.doorConfig.freq1;
     break;
@@ -138,7 +141,7 @@ int8_t write40000(uint16_t offset, uint8_t *dptr)
     break;
   case 32: // door open
     if(val == 1)
-      chEvtSignal(appParam.mainThread,EV_TG1_TRIGGER);
+      chEvtSignal(appParam.mainThread,EV_TG1_MBTRG);
     else if(val == 2)
       chEvtSignal(appParam.mainThread,EV_TG2_TRIGGER);
     break;

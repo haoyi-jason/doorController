@@ -126,42 +126,6 @@ static SPIConfig spicfg = {
   SPI_CR1_BR_2 | SPI_CR1_BR_1 |SPI_CR1_BR_0 | SPI_CR1_LSBFIRST
 };
 
-//static void icuwidthcb(ICUDriver *icup)
-//{
-//  
-//}
-//
-//static void icuperiodcb(ICUDriver *icup)
-//{
-//  
-//}
-
-//static ICUConfig icucfg_t3 = {
-//  ICU_INPUT_ACTIVE_HIGH,
-//  10000,
-//  icuwidthcb,
-//  icuperiodcb,
-//  NULL,
-//  ICU_CHANNEL_1 | ICU_CHANNEL_3,
-//  0
-//};
-//
-//static ICUConfig icucfg_t8 = {
-//  ICU_INPUT_ACTIVE_HIGH,
-//  10000,
-//  icuwidthcb,
-//  icuperiodcb,
-//  NULL,
-//  ICU_CHANNEL_3,
-//  0
-//};
-
-//static const GPTConfig gptcfg = {
-//  100000,
-//  NULL,
-//  0,
-//  0
-//};
 
 static void pwmcb(PWMDriver *pwmp)
 {
@@ -1492,11 +1456,12 @@ static THD_FUNCTION(procDoorClose ,p)
       }else{
         uint8_t state = 0x0;
         if(appParam.boardID & DUAL_DOOR){
+          // create / monitor main door thread
           if(t1 == NULL){
             mr1.actType = ACT_CLOSE;
             mr1.stopType = ST_HOME;
-            mr1.actForce = moduleParam.door[0].closeFwdSpeed;
-            mr1.actTime = 0;
+            mr1.actForce = moduleParam.door[0].closeFwdSpeed; // 關門壓門力量
+            mr1.actTime = moduleParam.door[0].closeFwdTime;     // 關門壓門時間
             mr1.maxSpeed = mr1.d->normalSpeed;
             t1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M1",NORMALPRIO,procMotorFollowRun,&mr1);
           }
@@ -1514,20 +1479,20 @@ static THD_FUNCTION(procDoorClose ,p)
             if(t2->state == 0xf) state |= 0x2;
           }
           switch(state){
-          case 0x1: // t1 terminated only
+          case 0x1: // t1 terminated only, check if normal or not
             r1 = t1->u.exitcode;
-           
+            // if M1 terminate abnormally, terminate M2
             if(r1 != MSG_OK && r1 != ERR_INPOSITION){
-              // terminate r2
-              if(appParam.boardID & DUAL_DOOR){
-                if(t2 != NULL){
-                  if(IS_ERR(r1, ERR_LOCKED))
-                    chEvtSignal(t2,EV_ABORT_LOCK);
-                  else if(IS_ERR(r1 , ERR_OVERCURRENT))
-                    chEvtSignal(t2,EV_ABORT_OC);
-                  // wait t2
-                  chThdWait(t2);
+              if(t2 != NULL){
+                if(IS_ERR(r1, ERR_LOCKED)){
+                  opState.lock_times[0]++;
+                  chEvtSignal(t2,EV_ABORT_LOCK);
                 }
+                else if(IS_ERR(r1 , ERR_OVERCURRENT)){
+                  chEvtSignal(t2,EV_ABORT_OC);
+                }
+                // wait t2
+                chThdWait(t2);
               }
               chThdWait(t1);
               errorState=r1;
@@ -1539,10 +1504,13 @@ static THD_FUNCTION(procDoorClose ,p)
             if(r2 != MSG_OK && r2 != ERR_INPOSITION){
               // terminate t1
               if(t1 != NULL){
-                if(IS_ERR(r2 , ERR_LOCKED))
+                if(IS_ERR(r2 , ERR_LOCKED)){
+                  opState.lock_times[1]++;
                   chEvtSignal(t1,EV_ABORT_LOCK);
-                else if(IS_ERR(r1 , ERR_OVERCURRENT))
+                }
+                else if(IS_ERR(r1 , ERR_OVERCURRENT)){
                   chEvtSignal(t1,EV_ABORT_OC);
+                }
                 // wait t1
                 chThdWait(t1);
               }
@@ -1558,6 +1526,7 @@ static THD_FUNCTION(procDoorClose ,p)
             if(r1 != MSG_OK){
               if(IS_ERR(r1 , ERR_LOCKED) || IS_ERR(r1 , ERR_OVERCURRENT)){
                 moduleParam.door[0].lock_times++;
+                opState.lock_times[0]++;
                 run = false;
               }
             }
@@ -1565,6 +1534,7 @@ static THD_FUNCTION(procDoorClose ,p)
   //            SET_ERR(errorState,r2);
               if(IS_ERR(r2 , ERR_LOCKED) || IS_ERR(r2 , ERR_OVERCURRENT)){
                 moduleParam.door[0].lock_times++;
+                opState.lock_times[1]++;
                 run = false;
               }
             }
@@ -2139,7 +2109,7 @@ static THD_FUNCTION(procDoorControl ,p)
 //  pwmStart(&PWMD5, &pwmcfg_t5);
   
   appParam.closeByTimeout = 0;
-  
+  appParam.openTimes = 0;
   while(1){
     //wdgReset(&WDGD1);
     eventmask_t evt = chEvtWaitAnyTimeout(ALL_EVENTS,MS2ST(100));
@@ -2217,13 +2187,11 @@ static THD_FUNCTION(procDoorControl ,p)
       uint16_t tmp;
       chThdSleepMilliseconds(100);
       if(di_map[USR_BTN].read(&di_map[USR_BTN]) ==0){
-//        appParam.userInPress = 1;
-//      }
-//      else{
         uint16_t sw = read_board_id();
         sw >>=4;
         switch(sw){
         case 0:
+          appParam.openTimes++;
           do_map[DOOR_CLOSED].clear(&do_map[DOOR_CLOSED]);
           err = doorOpenCtrl();
           if(err == MSG_OK){
@@ -2344,9 +2312,11 @@ static THD_FUNCTION(procDoorControl ,p)
       }
     }
 
+
     if(evt & EV_TG1_TRIGGER){
       chThdSleepMilliseconds(100);
       if(di_map[DOOR1_OPEN].read(&di_map[DOOR1_OPEN]) ==0){
+        appParam.openTimes++;
         do_map[DOOR_CLOSED].clear(&do_map[DOOR_CLOSED]);
         err = doorOpenCtrl();
         if(err == MSG_OK){
@@ -2367,6 +2337,30 @@ static THD_FUNCTION(procDoorControl ,p)
       }
     }
     
+    if(evt & EV_TG1_MBTRG){
+      chThdSleepMilliseconds(100);
+//      if(di_map[DOOR1_OPEN].read(&di_map[DOOR1_OPEN]) ==0){
+        appParam.openTimes++;
+        do_map[DOOR_CLOSED].clear(&do_map[DOOR_CLOSED]);
+        err = doorOpenCtrl();
+        if(err == MSG_OK){
+          do_map[DOOR_OPEN_DONE].set(&do_map[DOOR_OPEN_DONE]);
+          if(moduleParam.doorConfig.waitTimeToClose == 0){
+            appParam.closeByTimeout = 1;
+            chEvtSignal(appParam.mainThread,EV_TG2_TRIGGER);
+          }else{
+            chVTSet(&vt_door_close,S2ST(moduleParam.doorConfig.waitTimeToClose),door_close_cb,NULL);
+          }
+        }
+        else{
+          if(err & ERR_LOCKED)
+            alarm(ALM_DOOR_BLOCKING);
+          if(err & ERR_OVERCURRENT)
+            alarm(ALM_DOOR_OC);
+        }
+//      }
+    }
+
     if(evt & EV_TG2_TRIGGER){
       if(di_map[DOOR2_OPEN].read(&di_map[DOOR2_OPEN]) ==0 || (appParam.closeByTimeout == 1)){
         appParam.closeByTimeout = 0;
@@ -2397,6 +2391,11 @@ static THD_FUNCTION(procDoorControl ,p)
       NVIC_SystemReset();
     }
     
+    if(appParam.openTimes >= 10){
+      opState.openTimes += appParam.openTimes;
+      sysSaveOpstate();
+      appParam.openTimes = 0;
+    }
   }
   
 }

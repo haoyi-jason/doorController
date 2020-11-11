@@ -6,6 +6,7 @@
 #
 
 module_params_t moduleParam;
+_op_state_t opState;
 const serial_setting_t serial_default = {
   0,
   9600,
@@ -72,11 +73,19 @@ void defaultParams(void)
   moduleParam.angle_check_diff = 5; // degree
   moduleParam.ramp = 5; // pwm duty increase/decrease speed
   
+  opState.lock_times[0] = opState.lock_times[3] = opState.lock_times[2] =0;
+  opState.max_working_current[0] = opState.max_working_current[1] = opState.max_working_current[2] = 0;
+  opState.openTimes = 0;
 }
 
 void sysSaveParams(void)
 {
   eepromWrite(EEP_STORE_OFFSET,sizeof(module_params_t),(uint8_t*)&moduleParam);
+}
+
+void sysSaveOpstate(void)
+{
+  eepromWrite(EEP_STORE_OFFSET,sizeof(_op_state_t),(uint8_t*)&opState);
 }
 
 void sysParamInit()
