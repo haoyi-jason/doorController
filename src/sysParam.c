@@ -37,7 +37,7 @@ const _door_global_config_t default_door_config = {
   333./80.,
   20,
   5,
-  5,
+  1,
   30,
   1,
   20,
@@ -54,8 +54,8 @@ const _door_global_config_t default_door_config = {
 //};
 
 const _door_config_t door_default[] = {
-  {TYPE_DOOR,80,40,95,70,20,25,5,25,10,750,450,3,0,0},
-  {TYPE_DOOR,80,40,95,70,20,25,5,25,10,750,450,3,0,0},
+  {TYPE_DOOR,80,40,100,70,20,25,5,25,10,750,450,3,0,0},
+  {TYPE_DOOR,70,40,110,70,20,25,5,25,10,750,450,3,0,0},
   {TYPE_LOCK,15,15,255,255,255,255,255,25,10,750,450,3,0,0},
 };
 

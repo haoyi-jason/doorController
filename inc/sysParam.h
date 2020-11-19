@@ -11,7 +11,7 @@ EEP_HEADING revision
 */
 
 
-#define EEP_HEADING              0x45503033
+#define EEP_HEADING              0x45503034
 #define EEP_STORE_OFFSET        0x100
 #define EEP_OPPARAM_OFFSET        0x400
 
@@ -75,7 +75,7 @@ typedef struct{
   float degree_percent;
   uint8_t angleDiff;    // 雙開角度差
   uint8_t lockActiveTime; // 電鎖作動時間, 0.1s
-  uint8_t waitTimeToClose;      // 開門等待時間.
+  uint8_t waitTimeToClose;      // 開門等待時間.(s)
   int16_t doorFreeAngle;        //  open angle to ignore follow criteria
   int16_t actionDelay;  //作動時間間隔
   int16_t angleValidDeg;         // 阻擋判斷角度差

@@ -17,7 +17,7 @@ static const EXTConfig extcfg = {
     {EXT_CH_MODE_DISABLED, NULL}, 
     {EXT_CH_MODE_DISABLED, NULL}, 
     {EXT_CH_MODE_BOTH_EDGES | EXT_MODE_GPIOB, ang2_int_handler}, 
-    {EXT_CH_MODE_FALLING_EDGE | EXT_MODE_GPIOC, tg1_int_handler}, 
+    {EXT_CH_MODE_BOTH_EDGES | EXT_MODE_GPIOC, tg1_int_handler}, 
     {EXT_CH_MODE_FALLING_EDGE | EXT_MODE_GPIOC, tg2_int_handler}, 
     {EXT_CH_MODE_DISABLED, NULL}, 
     {EXT_CH_MODE_DISABLED, NULL}, 

@@ -6,8 +6,8 @@
 #include "rsi_bt_common.h"
 #include "rsi_bt_config.h"
 
-#define VERSION 0x2010
-#define VERSION_2       0x2101
+#define VERSION 0x2011
+#define VERSION_2       0x1901
 
 typedef void (*rsi_interrupt_cb)(void);
 typedef void (*lora_interrupt_cb)(void *);
@@ -106,9 +106,50 @@ enum alarm_code{
   ALM_INP
 };
 
-#define SET_ERR(b,x)            (b |= (1<<x))
+#define ERR_M1_MASK     0x10
+#define ERR_M2_MASK     0x20
+
+// possible motor/door error
+enum{
+  ERR_NOERROR,
+  ERR_MOTOR_POL,        // polarity error
+  ERR_MOTOR_WIR,        // drive motor without angle change
+  ERR_MOTOR_ANGS,       // angle sensor @5% or 95%
+  ERR_MOTOR_POSS,       // Photocoupler not work 
+  ERR_MOTOR_OC,         // over current
+  ERR_MOTOR_LC,         // locked
+};
+
+// possible LOCK error
+enum{
+  ERR_LOCK_DIR = 1,
+  ERR_LOCK_LOST
+};
+
+enum err_n{
+  RPT_MMOTOR_POLARITY,
+  RPT_MMOTOR_WIRING,
+  RPT_MANG_SENSOR,
+  RPT_MPOS_SENSOR,
+  RPT_MMOTOR_OC,
+  RPT_SMOTOR_POLARITY,
+  RPT_SMOTOR_WIRING,
+  RPT_SANG_SENSOR,
+  RPT_SPOS_SENSOR,
+  RPT_SMOTOR_OC,
+  RPT_WRONG_PARAM,
+  RPT_LOCK
+};
+
+//#define SET_ERR(b,x)            (b |= (1<<x))
+#define SET_ERR(b,x)            (b = x)
 #define CLR_ERR(b,x)            (b &= ~(1<<x))
-#define IS_ERR(b,x)             (b & (1<<x))
+//#define IS_ERR(b,x)             (b & (1<<x))
+#define IS_ERR(b,x)             (b ==x)
+
+#define M1_ERR(b,x)     (b = ERR_M1_MASK | x)
+#define M2_ERR(b,x)     (b = ERR_M2_MASK | x)
+
 
 #define ERR_M1_CURRENT  0x01
 #define ERR_M2_CURRENT  0x02
