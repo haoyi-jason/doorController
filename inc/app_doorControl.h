@@ -7,7 +7,7 @@
 #include "rsi_bt_config.h"
 
 #define VERSION 0x2011
-#define VERSION_2       0x1901
+#define VERSION_2       0x2501
 
 typedef void (*rsi_interrupt_cb)(void);
 typedef void (*lora_interrupt_cb)(void *);
@@ -306,6 +306,7 @@ typedef struct{
   thread_t *mainThread,*m1Thread,*m2Thread,*m3Thread;
   thread_t *transThread;
   thread_t *beepThread;
+  thread_t *closingThread;
   beep_pattern_t *beep;
   virtual_timer_t vtBeep;
   uint8_t userInPress;
@@ -322,6 +323,8 @@ typedef struct{
   uint16_t errState;
   uint8_t closeByTimeout;
   uint8_t openTimes;
+  uint8_t doorClosing;
+  uint8_t doorReopen;
 }_appParam_t;
 
 extern _appParam_t appParam;
