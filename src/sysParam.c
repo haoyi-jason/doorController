@@ -85,7 +85,12 @@ void sysSaveParams(void)
 
 void sysSaveOpstate(void)
 {
-  eepromWrite(EEP_STORE_OFFSET,sizeof(_op_state_t),(uint8_t*)&opState);
+  eepromWrite(EEP_OPPARAM_OFFSET,sizeof(_op_state_t),(uint8_t*)&opState);
+}
+
+void sysReadOpState(void)
+{
+  eepromRead(EEP_OPPARAM_OFFSET,sizeof(_op_state_t),(uint8_t*)&opState);
 }
 
 void sysParamInit()
@@ -95,8 +100,14 @@ void sysParamInit()
   if(moduleParam.param.flag != EEP_HEADING){
     defaultParams();
     sysSaveParams();
+    opState.lock_times[0] =opState.lock_times[1] =opState.lock_times[2] = 0;
+    opState.max_working_current[0] = opState.max_working_current[1] = opState.max_working_current[2] = 0;
+    opState.openTimes = 0;
+    sysSaveOpstate();
   }
   
   if(moduleParam.doorConfig.adSampleIgnore == 0)
     moduleParam.doorConfig.adSampleIgnore = 5;
+  
+  sysReadOpState();
 }

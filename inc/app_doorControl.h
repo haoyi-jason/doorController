@@ -6,8 +6,8 @@
 #include "rsi_bt_common.h"
 #include "rsi_bt_config.h"
 
-#define VERSION 0x2011
-#define VERSION_2       0x2501
+#define VERSION 0x2012
+#define VERSION_2       0x2901
 
 typedef void (*rsi_interrupt_cb)(void);
 typedef void (*lora_interrupt_cb)(void *);
@@ -24,6 +24,7 @@ typedef void (*lora_interrupt_cb)(void *);
 #define EV_CMD_RX   EVENT_MASK(9)
 #define EV_TG1_MBTRG   EVENT_MASK(10)
 
+#define EV_SYS_RESET_NVM EVENT_MASK(28)
 #define EV_SYS_CLEAR_ERROR EVENT_MASK(29)
 #define EV_SYS_RESET EVENT_MASK(30)
 #define EV_SYS_SAVE_PARAM EVENT_MASK(31)
@@ -59,8 +60,8 @@ enum do_map{
 enum di_map{
   ULOCK_INP,
   LLOCK_INP,
-  DOOR1_OPEN,
-  DOOR2_OPEN,
+  TG1_IN,
+  TG2_IN,
   DOOR1_INP,
   DOOR2_INP,
   ANG1_ICP,
@@ -325,6 +326,7 @@ typedef struct{
   uint8_t openTimes;
   uint8_t doorClosing;
   uint8_t doorReopen;
+  virtual_timer_t vtDoorCheck;
 }_appParam_t;
 
 extern _appParam_t appParam;

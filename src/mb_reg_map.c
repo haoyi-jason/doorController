@@ -138,6 +138,9 @@ int8_t write40000(uint16_t offset, uint8_t *dptr)
       chEvtSignal(appParam.mainThread,EV_SYS_SAVE_PARAM);
     else if(val == 88)
       chEvtSignal(appParam.mainThread,EV_SYS_RESET);
+    else if(val ==77){
+      chEvtSignal(appParam.mainThread,EV_SYS_RESET_NVM);
+    }
     break;
   case 32: // door open
     if(val == 1)
@@ -254,10 +257,10 @@ int8_t write40200(uint16_t offset, uint8_t *dptr)
     moduleParam.door[id].openRevSpeed = val;
     break;
   case 8:
-    moduleParam.door[id].closeFwdSpeed = val;
+    moduleParam.door[id].closeFwdTime = val;
     break;
   case 9:
-    moduleParam.door[id].closeFwdTime = val;
+    moduleParam.door[id].closeFwdSpeed = val;
     break;
   case 10:
     moduleParam.door[id].lock_times = val;

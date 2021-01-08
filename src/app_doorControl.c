@@ -233,12 +233,12 @@ static void adcerror(ADCDriver *adcp, adcerror_t err)
 static const ADCConversionGroup adcgrpcfg = {
   TRUE,
   ADC_GRP1_NUM_CHANNELS,
-  adccallback,
+  NULL,
   NULL,
   0,
   ADC_CR2_SWSTART,
   0,
-  ADC_SMPR2_SMP_AN0(ADC_SAMPLE_15) | ADC_SMPR2_SMP_AN1(ADC_SAMPLE_15)| ADC_SMPR2_SMP_AN2(ADC_SAMPLE_15),
+  ADC_SMPR2_SMP_AN0(ADC_SAMPLE_3) | ADC_SMPR2_SMP_AN1(ADC_SAMPLE_3)| ADC_SMPR2_SMP_AN2(ADC_SAMPLE_3),
   ADC_SQR1_NUM_CH(ADC_GRP1_NUM_CHANNELS),
   0,
   ADC_SQR3_SQ1_N(ADC_CHANNEL_IN0) | ADC_SQR3_SQ2_N(ADC_CHANNEL_IN1) | ADC_SQR3_SQ3_N(ADC_CHANNEL_IN6)
@@ -285,7 +285,7 @@ enum{
 void handleADCCalculation(void)
 {
   uint16_t chSum[3] = {0,0,0};
-  chSysLock();
+  //chSysLock();
   for(uint8_t i=0;i<ADC_GRP1_BUF_DEPTH;i++){
     chSum[0] += samples[i*3];
     chSum[1] += samples[i*3+1];
@@ -305,7 +305,7 @@ void handleADCCalculation(void)
   if(appParam.motorConfig[0].dc_current < 0) appParam.motorConfig[0].dc_current = 0;
   if(appParam.motorConfig[1].dc_current < 0) appParam.motorConfig[1].dc_current = 0;
   
-  chSysUnlock();
+  //chSysUnlock();
 
   if(appParam.motorConfig[0].dc_current < 0){
     chSum[0]++;
@@ -524,18 +524,26 @@ void BEEP(uint8_t mask)
     b = mask+10;
   }
   b--;
-  for(uint8_t i=0;i<4;i++){
-    if((b & (1<<(3-i))) == 0){
-      beep->set(beep);
-      chThdSleepMilliseconds(300);
-      beep->clear(beep);
-      chThdSleepMilliseconds(900);
-    }
-    else{
-      beep->set(beep);
-      chThdSleepMilliseconds(600);
-      beep->clear(beep);
-      chThdSleepMilliseconds(600);
+  if((mask & 0xf) == 0x5){
+    beep->set(beep);
+    chThdSleepMilliseconds(900);
+    beep->clear(beep);
+    chThdSleepMilliseconds(300);
+  }
+  else{
+    for(uint8_t i=0;i<4;i++){
+      if((b & (1<<(3-i))) == 0){
+        beep->set(beep);
+        chThdSleepMilliseconds(300);
+        beep->clear(beep);
+        chThdSleepMilliseconds(900);
+      }
+      else{
+        beep->set(beep);
+        chThdSleepMilliseconds(600);
+        beep->clear(beep);
+        chThdSleepMilliseconds(600);
+      }
     }
   }
 }
@@ -621,7 +629,7 @@ void setupIWDG(void)
 //  IWDG_Enable();
 }
 
-
+#define HIST_SIZE 30
 static THD_FUNCTION(procMotorPosRun,p)
 {
   motor_run_t *mr = (motor_run_t*)p;
@@ -637,12 +645,14 @@ static THD_FUNCTION(procMotorPosRun,p)
   uint8_t currentValidDelay = moduleParam.doorConfig.adSampleIgnore;
   mr->m->inPos = false;
   uint8_t inpValidCycle = moduleParam.doorConfig.actionDelay<<1;
-  int16_t validAngle;
+  int16_t validAngle = 0;
   
-  int16_t angleHist[8];
+  int16_t angleHist[HIST_SIZE];
   uint8_t angleRecord = 0;
   uint8_t check_cycle = 20; 
   uint8_t isDoor = (mr->m == (&appParam.motorConfig[2]))?0:1;
+  uint16_t runCycles = 0;
+  memset(angleHist,0,HIST_SIZE*2);
   while(run){
     //wdgReset(&WDGD1);
     eventmask_t evt = chEvtWaitAnyTimeout(ALL_EVENTS,TIME_IMMEDIATE);
@@ -662,11 +672,11 @@ static THD_FUNCTION(procMotorPosRun,p)
     if(mr->actType == ACT_OPEN){
       if(mr->m->angle > mr->d->sldOpenAngle){
         speed = mr->d->slowSpeed;
-        validAngle = moduleParam.doorConfig.angleValidDeg>>2;
+        //validAngle = moduleParam.doorConfig.angleValidDeg>>2;
       }
       else{
         speed = mr->d->normalSpeed;  
-        validAngle = moduleParam.doorConfig.angleValidDeg;
+        //validAngle = moduleParam.doorConfig.angleValidDeg;
       }
 
       if(mr->stopType & ST_POSITION){
@@ -687,11 +697,11 @@ static THD_FUNCTION(procMotorPosRun,p)
     else{ // door close
       if(mr->m->angle < mr->d->sldCloseAngle){
         speed = mr->d->slowSpeed;
-        validAngle = moduleParam.doorConfig.angleValidDeg;
+        //validAngle = moduleParam.doorConfig.angleValidDeg;
       }
       else{
         speed = mr->d->normalSpeed;
-        validAngle = moduleParam.doorConfig.angleValidDeg>>2;
+        //validAngle = moduleParam.doorConfig.angleValidDeg>>2;
       }
 
       if(mr->stopType & ST_HOME){
@@ -746,43 +756,6 @@ static THD_FUNCTION(procMotorPosRun,p)
     
 //    mr->d->max_working_current = (mr->d->max_working_current>mr->m->dc_current)?mr->d->max_working_current:mr->m->dc_current;
     
-    // valid for door lock
-    if(mr->m->orgFound){
-      if(mr->m->running){
-        if(speed == 0){
-          //checkCycle = moduleParam.angle_check_time;
-          checkCycle = moduleParam.doorConfig.angleValidCycles;
-        }else{
-          // valid for current
-          if(currentValidDelay) currentValidDelay--;
-          if(currentValidDelay == 0){
-            if(mr->m->dc_current > mr->d->normalMaxCurrent){
-              SET_ERR(errState,ERR_MOTOR_OC);
-              speed = 0;
-              run = false;
-            }
-          }
-          mr->d->max_working_current = (mr->d->max_working_current>mr->m->dc_current)?mr->d->max_working_current:mr->m->dc_current;
-          checkCycle--;
-          if(checkCycle == 0){
-            checkCycle = moduleParam.doorConfig.angleValidCycles;
-            int16_t diff = mr->m->angle - lastPos;
-            if(diff < 0) diff *= -1;
-            
-//            if(speed != 0){
-//              if(diff < validAngle  && mr->m->angle > validAngle){
-              if(diff < validAngle){
-//              if(diff < moduleParam.doorConfig.angleValidDeg){
-                //lockedCount++;
-                speed = 0;
-                SET_ERR(errState,ERR_MOTOR_LC);
-              }
-//            }
-            lastPos = mr->m->angle;
-          }
-        }       
-      }
-    }
     
     // update speed
     if((errState == 0) && (run==true)){
@@ -802,9 +775,11 @@ static THD_FUNCTION(procMotorPosRun,p)
       
       if(cspeed == 0 && run){
         motorControlP(true,mr->dir,mr->m,cspeed);
+        validAngle = 0;
       }
       else{
         motorControlP(true,mr->actType==ACT_OPEN?mr->m->posDir:mr->m->negDir,mr->m,cspeed);
+        validAngle = (cspeed * moduleParam.doorConfig.angleValidDeg)/mr->maxSpeed;
       }
     }
     else{
@@ -813,19 +788,81 @@ static THD_FUNCTION(procMotorPosRun,p)
     }
 
     if(isDoor){
-      angleHist[angleRecord++ & 0x07] = mr->m->angle;
-      if(angleRecord == 20){ // check only @ 20 cycles
+      if(runCycles == 20){ // check only @ 20 cycles
         if(mr->actType == ACT_OPEN){
-          if(angleHist[((angleRecord-1) & 0x7)] < angleHist[(angleRecord)&0x7]){
+          if(angleHist[0] < angleHist[10]){
             SET_ERR(errState,ERR_MOTOR_POL);
             run = false;
           }
         }
         else{
-          if(angleHist[(angleRecord-1) & 0x7] > angleHist[(angleRecord)&0x7]){
+          if(angleHist[0] > angleHist[10]){
             SET_ERR(errState,ERR_MOTOR_POL);
             run = false;
           }
+        }
+      }
+      // valid for door lock
+      if(mr->m->orgFound){
+        if(mr->m->running){
+          if(speed == 0){
+            //checkCycle = moduleParam.angle_check_time;
+            checkCycle = moduleParam.doorConfig.angleValidCycles;
+            currentValidDelay = moduleParam.doorConfig.adSampleIgnore;
+            angleRecord = 0;
+          }else{
+            for(uint8_t i=HIST_SIZE-1;i>=1;i--){
+              angleHist[i] = angleHist[i-1];
+            }
+            angleHist[0] = mr->m->angle;
+            angleRecord++;
+            // valid for current
+            if(currentValidDelay) currentValidDelay--;
+            if(currentValidDelay == 0){
+              if(mr->m->dc_current > mr->d->normalMaxCurrent){
+                SET_ERR(errState,ERR_MOTOR_OC);
+                speed = 0;
+                run = false;
+              }
+            }
+            mr->d->max_working_current = (mr->d->max_working_current>mr->m->dc_current)?mr->d->max_working_current:mr->m->dc_current;
+            // valid for door lock or not
+            if(angleRecord > moduleParam.doorConfig.angleValidCycles){
+              int16_t diff = angleHist[0] - angleHist[moduleParam.doorConfig.angleValidCycles];
+              
+              if(diff < 0) diff *= -1;
+                
+                if(diff < validAngle){
+                  lockedCount++;
+                  if(lockedCount > 3){
+                    speed = 0;
+                    SET_ERR(errState,ERR_MOTOR_LC);
+                  }
+                }
+                else{
+                  lockedCount = 0;
+                }
+              lastPos = mr->m->angle;
+            }
+//            checkCycle--;
+//            if(checkCycle == 0){
+//              checkCycle = moduleParam.doorConfig.angleValidCycles;
+//              int16_t diff = mr->m->angle - lastPos;
+//              if(diff < 0) diff *= -1;
+//              
+//                if(diff < validAngle){
+//                  lockedCount++;
+//                  if(lockedCount > 3){
+//                    speed = 0;
+//                    SET_ERR(errState,ERR_MOTOR_LC);
+//                  }
+//                }
+//                else{
+//                  lockedCount = 0;
+//                }
+//              lastPos = mr->m->angle;
+//            }
+          }       
         }
       }
     }
@@ -845,7 +882,7 @@ static THD_FUNCTION(procMotorPosRun,p)
       }
     }
     chThdSleepMilliseconds((CYCLE_TIME));
-
+    runCycles++;
   }
   
   chThdExit((msg_t)errState);
@@ -875,7 +912,7 @@ static THD_FUNCTION(procMotorTimeRun,p)
       SET_ERR(errState,ERR_MOTOR_OC);
       speed = 0;
     }else{
-      mr->d->max_working_current = mr->m->dc_current;
+//      mr->d->max_working_current = mr->m->dc_current;
       speed = mr->d->normalSpeed;
     }
     mr->d->max_working_current = (mr->d->max_working_current>mr->m->dc_current)?mr->d->max_working_current:mr->m->dc_current;
@@ -941,7 +978,16 @@ static THD_FUNCTION(procMotorFollowRun,p)
   bool emgZero = false;
   bool masterLocked = false;
   uint8_t inpValidCycle = moduleParam.doorConfig.actionDelay<<1;
-  int16_t validAngle;
+  int16_t validAngle = 0;
+
+  int16_t angleHist[HIST_SIZE];
+  uint16_t angleRecord = 0;
+  uint8_t check_cycle = 20; 
+  uint8_t cycle_delay = 30;
+//  uint8_t isDoor = (mr->m == (&appParam.motorConfig[2]))?0:1;
+  uint16_t runCycles = 0;
+  uint8_t followDelay = 10;
+  memset(angleHist,0,HIST_SIZE*2);
   while(run){
     //wdgReset(&WDGD1);
     eventmask_t evt = chEvtWaitAnyTimeout(ALL_EVENTS,TIME_IMMEDIATE);
@@ -962,11 +1008,11 @@ static THD_FUNCTION(procMotorFollowRun,p)
     if(mr->actType == ACT_OPEN){
       if(mr->m->angle > mr->d->sldOpenAngle){
         speed = mr->d->slowSpeed;
-        validAngle = moduleParam.doorConfig.angleValidDeg>>2;
+        //validAngle = moduleParam.doorConfig.angleValidDeg>>2;
       }
       else{
         speed = mr->d->normalSpeed;
-        validAngle = moduleParam.doorConfig.angleValidDeg;
+        //validAngle = moduleParam.doorConfig.angleValidDeg;
       }
       // valid track target
       if(!mr->mf->inPos){
@@ -998,11 +1044,11 @@ static THD_FUNCTION(procMotorFollowRun,p)
     }else{ // close
       if(mr->m->angle < mr->d->sldCloseAngle){
         speed = mr->d->slowSpeed;
-        validAngle = moduleParam.doorConfig.angleValidDeg >> 2;
+        //validAngle = moduleParam.doorConfig.angleValidDeg >> 2;
       }
       else{
         speed = mr->d->normalSpeed;
-        validAngle = moduleParam.doorConfig.angleValidDeg;
+        //validAngle = moduleParam.doorConfig.angleValidDeg;
       }
       // valid track target
       if(!mr->mf->inPos && mr->mf->angle > moduleParam.doorConfig.doorFreeAngle){
@@ -1081,12 +1127,36 @@ static THD_FUNCTION(procMotorFollowRun,p)
     }
     
     
-    // valid for door lock
+//    if(runCycles == 20){ // check only @ 20 cycles
+//      if(mr->actType == ACT_OPEN){
+//        if(angleHist[((angleRecord-1) & 0x7)] < angleHist[(angleRecord)&0x7]){
+//          SET_ERR(errState,ERR_MOTOR_POL);
+//          run = false;
+//        }
+//      }
+//      else{
+//        if(angleHist[(angleRecord-1) & 0x7] > angleHist[(angleRecord)&0x7]){
+//          SET_ERR(errState,ERR_MOTOR_POL);
+//          run = false;
+//        }
+//      }
+//    }
     if(mr->m->orgFound){
       if(mr->m->running){
         if(speed == 0){
           checkCycle = moduleParam.doorConfig.angleValidCycles;
+          angleRecord = 0;
+          followDelay = 10;
         }else{        
+          // update angle history
+          for(uint8_t i=HIST_SIZE-1;i>=1;i--){
+            angleHist[i] = angleHist[i-1];
+          }
+          angleHist[0] = mr->m->angle;
+          if(followDelay == 0)
+            angleRecord++;
+          else
+            followDelay--;
           // valid for current
           if(currentValidDelay) currentValidDelay--;
           
@@ -1097,19 +1167,46 @@ static THD_FUNCTION(procMotorFollowRun,p)
               run = false;
             }
             mr->d->max_working_current = (mr->d->max_working_current>mr->m->dc_current)?mr->d->max_working_current:mr->m->dc_current;
-            checkCycle--;
-            if(checkCycle == 0){
-              checkCycle = moduleParam.doorConfig.angleValidCycles;
-              int16_t diff = mr->m->angle - lastPos;
+
+          }
+          // valid for door locked
+          if(angleRecord > moduleParam.doorConfig.angleValidCycles){
+            int16_t diff = angleHist[moduleParam.doorConfig.angleValidCycles] - angleHist[0];
+            if(angleHist[0] != 0){
               if(diff < 0) diff *= -1;
-              if(speed != 0 && mr->m->angle > validAngle){
-                if(diff < validAngle){
+              
+              if(diff < validAngle){
+                lockedCount++;
+                if(lockedCount > 3){
                   speed = 0;
-                  SET_ERR(errState , ERR_MOTOR_LC);
+                  SET_ERR(errState,ERR_MOTOR_LC);
                 }
               }
-              lastPos = mr->m->angle;
+              else{
+                lockedCount = 0;
+              }
             }
+            
+//            checkCycle--;
+//            if(checkCycle == 0){
+//              checkCycle = moduleParam.doorConfig.angleValidCycles;
+//              int16_t diff = mr->m->angle - lastPos;
+//              if(diff < 0) diff *= -1;
+//              if(speed != 0 && mr->m->angle > validAngle){
+//                if(diff < validAngle){
+//                  lockedCount++;
+//                  if(lockedCount > 3){
+//                    speed = 0;
+//                    SET_ERR(errState , ERR_MOTOR_LC);
+//                  }
+//                  
+//                }
+//                else{
+//                  lockedCount = 0;
+//                }
+//              }
+//              lastPos = mr->m->angle;
+//            }
           }
         }
       }
@@ -1133,14 +1230,17 @@ static THD_FUNCTION(procMotorFollowRun,p)
       cspeed = speed;
       if(cspeed == 0 && run){
         motorControlP(true,mr->actType==ACT_OPEN?mr->m->posDir:mr->m->negDir,mr->m,0);
+        validAngle = 0;
       }
       else
         motorControlP(true,mr->actType==ACT_OPEN?mr->m->posDir:mr->m->negDir,mr->m,cspeed);
+        validAngle = (cspeed * moduleParam.doorConfig.angleValidDeg)/mr->maxSpeed;
     }else{
       motorControlP(false,mr->actType==ACT_OPEN?mr->m->posDir:mr->m->negDir,mr->m,0);
       run = false;
     }
     chThdSleepMilliseconds((CYCLE_TIME));
+    runCycles++;
     if(!run){
       if(errState == 0){
         if(mr->actForce == 0)
@@ -1235,6 +1335,7 @@ static THD_FUNCTION(procDoorOpen ,p)
   uint32_t errorState = 0;
   
   thread_t *t1,*t2,*t3;
+  t1 = t2 = t3 = NULL;
   uint8_t stage = 0;
   uint8_t retry = 0;
   uint32_t retry_delay = 0;
@@ -1258,6 +1359,8 @@ static THD_FUNCTION(procDoorOpen ,p)
 
   uint8_t openRetry = 0;
   uint16_t speed;
+  uint8_t openRevTime = mr1.d->openRevTime;
+  if(openRevTime < 2) openRevTime = 2;
   while(run){
     //wdgReset(&WDGD1);
     if(chThdShouldTerminateX()){
@@ -1267,10 +1370,10 @@ static THD_FUNCTION(procDoorOpen ,p)
     case 0:
       //開門壓門
       if(t1 == NULL){
-        mr1.runTime = mr1.d->openRevTime*100;
+        mr1.runTime = openRevTime*100;
         mr1.actType = ACT_CLOSE;
         mr1.stopType = ST_POSITION;
-        mr1.actForce = 0;
+        mr1.actForce = mr1.d->openRevSpeed;
         speed = moduleParam.door[0].openRevSpeed*(1 + openRetry);
         if(speed > moduleParam.door[0].normalSpeed)
         {
@@ -1278,7 +1381,7 @@ static THD_FUNCTION(procDoorOpen ,p)
         }
         mr1.maxSpeed = speed;
         t1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M1",NORMALPRIO,procMotorTimeRun,&mr1);
-        chThdSleepMilliseconds(100);
+        chThdSleepMilliseconds((openRevTime-1)*100);
       }
       if(t3 == NULL){ // create working thread if not running
         // 釋放電鎖
@@ -1514,6 +1617,7 @@ static THD_FUNCTION(procDoorClose ,p)
   uint32_t errorState = 0;
   
   thread_t *t1,*t2,*t3;
+  t1 = t2 = t3 = NULL;
   uint8_t stage = 0;
   uint8_t retry = 0;
   uint32_t retry_delay = 0;
@@ -1536,13 +1640,10 @@ static THD_FUNCTION(procDoorClose ,p)
     }
     eventmask_t flag = chEvtWaitAnyTimeout(ALL_EVENTS,TIME_IMMEDIATE);
     if(flag & EV_TG1_TRIGGER){
-      emgStop = true;
-//      run = false;
-//      motorControlP(false,0,mr1.m,0);
-//      motorControlP(false,0,mr2.m,0);
-//      motorControlP(false,0,mr3.m,0);
-//      errorState = 0xff;
-//      continue;
+      chThdSleepMilliseconds(100);
+      if(di_map[TG1_IN].read(&di_map[TG1_IN]) == 1){
+        emgStop = true;
+      }
     }
     switch(stage){
     case 0:
@@ -1553,6 +1654,17 @@ static THD_FUNCTION(procDoorClose ,p)
         uint8_t state = 0x0;
         if(appParam.boardID & DUAL_DOOR){
           // create / monitor main door thread
+          if(t2 == NULL){
+            mr2.actType = ACT_CLOSE;
+            mr2.stopType = ST_HOME;
+            mr2.actForce = moduleParam.door[1].closeFwdSpeed;
+            mr2.maxSpeed = mr2.d->normalSpeed;
+            t2 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M2",NORMALPRIO,procMotorPosRun,&mr2);
+            chThdSleepMilliseconds(100);
+          }
+          else{
+            if(t2->state == 0xf) state |= 0x2;
+          }
           if(t1 == NULL){
             mr1.actType = ACT_CLOSE;
             mr1.stopType = ST_HOME;
@@ -1563,16 +1675,6 @@ static THD_FUNCTION(procDoorClose ,p)
           }
           else{
             if(t1->state == 0xf) state |= 0x1;
-          }
-          if(t2 == NULL){
-            mr2.actType = ACT_CLOSE;
-            mr2.stopType = ST_HOME;
-            mr2.actForce = moduleParam.door[1].closeFwdSpeed;
-            mr2.maxSpeed = mr2.d->normalSpeed;
-            t2 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M2",NORMALPRIO,procMotorPosRun,&mr2);
-          }
-          else{
-            if(t2->state == 0xf) state |= 0x2;
           }
           switch(state){
           case 0x1: // t1 terminated only, check if normal or not
@@ -1839,11 +1941,15 @@ static THD_FUNCTION(procDoorHome ,p)
   uint32_t errorState = 0;
   
   thread_t *t1,*t2,*t3;
+  t1 = t2 = t3 = NULL;
   uint8_t stage = 0;
   uint8_t retry = 0;
   uint32_t retry_delay = 0;
   uint32_t last_delay = 0;
   msg_t r1,r2,r3;
+  uint8_t speed;
+  uint8_t openRevTime = mr1.d->openRevTime;
+  if(openRevTime < 2) openRevTime = 2;
   
   while(run){
     //wdgReset(&WDGD1);
@@ -1853,6 +1959,22 @@ static THD_FUNCTION(procDoorHome ,p)
     switch(stage){
     case 0:
       if(appParam.boardID & LOCK_ENABLED){ // has lock
+        // check if door at home
+        if(mr1.m->inhome){
+          mr1.runTime = openRevTime*100;
+          mr1.actType = ACT_CLOSE;
+          mr1.stopType = ST_POSITION;
+          mr1.actForce = mr1.d->openRevSpeed;
+          speed = moduleParam.door[0].openRevSpeed;
+          if(speed > moduleParam.door[0].normalSpeed)
+          {
+            speed = moduleParam.door[0].normalSpeed;
+          }
+          mr1.maxSpeed = speed;
+          t1 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M1",NORMALPRIO,procMotorTimeRun,&mr1);
+          chThdSleepMilliseconds((openRevTime-1)*100);
+        }
+        
         mr3.actType = ACT_OPEN;
         mr3.stopType = ST_PEL;
         mr3.actForce = 0;
@@ -1860,6 +1982,10 @@ static THD_FUNCTION(procDoorHome ,p)
         t3 = chThdCreateFromHeap(NULL,THD_WORKING_AREA_SIZE(512),"M3",NORMALPRIO,procMotorTimeRun,&mr3);
         // wait thread exit
         chThdWait(t3);
+        if(t1){
+          chThdWait(t1);
+          t1 = NULL;
+        }
         uint8_t mel = mr3.m->mel->read(mr3.m->mel);
         uint8_t pel = mr3.m->pel->read(mr3.m->pel);
         
@@ -2111,10 +2237,10 @@ static msg_t doorCloseCtrl(void)
       }
       else if(IS_ERR(r1,ERR_MOTOR_POSS)){
         run = false;
-        BEEP(r1);
+        //BEEP(r1);
       }
       else{
-        BEEP(r1);
+        ///BEEP(r1);
 //        if(IS_ERR(r1,ERR_LOCKED))
 //          alarm(ALM_DOOR_BLOCKING);
 //        if(IS_ERR(r1,ERR_OVERCURRENT))
@@ -2182,40 +2308,60 @@ static WDGConfig wdgcfg = {
   1000
 };
 
-static void ValidDoorState(void)
+static void ValidDoorState(void *arg)
 {
-  bool c1 = true, c2 = true;
+  //(void)arg;
+  if(appParam.doorClosing == 0){ // not judge if closing
+    bool c1 = true;
+    
+    if(appParam.motorConfig[0].inhome == 0){
+      c1 = false;
+    }
+   
+    if(appParam.motorConfig[0].angle > moduleParam.door[0].zero_angle_error){
+      c1 = false;
+    }
+    
+    
+    if(appParam.boardID & DUAL_DOOR){
+      if(appParam.motorConfig[1].inhome == 0){
+        c1 = false;
+      }
+      if(appParam.motorConfig[1].angle > moduleParam.door[1].zero_angle_error){
+        c1 = false;
+      }
+    }
+    
+    if(appParam.boardID & LOCK_ENABLED){ // has lock
+      if(appParam.motorConfig[2].mel->read(appParam.motorConfig[2].mel) == 0){
+        c1 = false;
+      }
+    }
+ 
+    
+    // check for lock state
+    
+    if(c1){
+      do_map[DOOR_CLOSED].set(&do_map[DOOR_CLOSED]);
+    }
+    else{
+      do_map[DOOR_CLOSED].clear(&do_map[DOOR_CLOSED]);
+    }
+  }
   
-//  if(appParam.motorConfig[0].inhome || appParam.motorConfig[0].angle <= moduleParam.door[0].zero_angle_error){
-  if(appParam.motorConfig[0].inhome){
-    c1 = true;
-  }
-  else{
-    c1 = false;
-  }
-//  if(appParam.motorConfig[1].inhome ||  appParam.motorConfig[1].angle <= moduleParam.door[1].zero_angle_error){
-  if(appParam.motorConfig[1].inhome){
-    c2 = true;
-  }
-  else{
-    c2 = false;
-  }
-  
-  if(c1 && c2){
-    do_map[DOOR_CLOSED].set(&do_map[DOOR_CLOSED]);
-  }
-  else{
-    do_map[DOOR_CLOSED].clear(&do_map[DOOR_CLOSED]);
-  }
+  chSysLockFromISR();
+  handleADCCalculation();  
+  chVTSetI(&appParam.vtDoorCheck,MS2ST(500),ValidDoorState,NULL);
+  chSysUnlockFromISR();
   
 }
 
-static THD_WORKING_AREA(waDoorControl,1024);
+static THD_WORKING_AREA(waDoorControl,2048);
 static THD_FUNCTION(procDoorControl ,p)
 {
   virtual_timer_t vt_door_close;
-  dio_map_t *door1_open = &di_map[DOOR1_OPEN];
-  dio_map_t *door2_open = &di_map[DOOR2_OPEN];
+  //dio_map_t *TG1_IN = &di_map[TG1_IN];
+  //dio_map_t *TG2_IN = &di_map[TG2_IN];
   _motor_config_t *m1 = &motors[MOTOR_MAIN];
   _motor_config_t *m2 = &motors[MOTOR_SUB];
   _motor_config_t *m3 = &motors[MOTOR_LOCK];
@@ -2226,6 +2372,9 @@ static THD_FUNCTION(procDoorControl ,p)
   msg_t ret;
   bool ready = false;
 
+  extChannelEnable(&EXTD1,0);
+  extChannelEnable(&EXTD1,4);
+
   motorControlP(false,DIR_POS,m1,0);
   motorControlP(false,DIR_POS,m2,0);
   motorControlP(false,DIR_POS,m3,0);
@@ -2235,6 +2384,8 @@ static THD_FUNCTION(procDoorControl ,p)
   adcStartConversion(&ADCD1,&adcgrpcfg,samples,ADC_GRP1_BUF_DEPTH);
 
   chVTObjectInit(&vt_door_close);
+  chVTObjectInit(&appParam.vtDoorCheck);
+  chVTSet(&appParam.vtDoorCheck,MS2ST(200),ValidDoorState,NULL);
   chThdSleepMilliseconds(100);
   if((appParam.boardID & MODEL_DOOR_LEFT) == MODEL_DOOR_LEFT){ // 0:OFF, 右型機, 1:ON:左型機
     m1->posDir = DIR_NEG;
@@ -2302,6 +2453,9 @@ static THD_FUNCTION(procDoorControl ,p)
   appParam.openTimes = 0;
   appParam.doorReopen = 0;
   //appParam.doorState = 0;
+  extChannelEnable(&EXTD1,5);
+  extChannelEnable(&EXTD1,6);
+  extChannelEnable(&EXTD1,13);
   while(1){
     //wdgReset(&WDGD1);
     eventmask_t evt = chEvtWaitAnyTimeout(ALL_EVENTS,MS2ST(100));
@@ -2390,6 +2544,7 @@ static THD_FUNCTION(procDoorControl ,p)
             appParam.openTimes++;
             //do_map[DOOR_CLOSED].clear(&do_map[DOOR_CLOSED]);
             err = doorOpenCtrl();
+            appParam.errState = err;
             if(err == MSG_OK){
               //do_map[DOOR_OPEN_DONE].set(&do_map[DOOR_OPEN_DONE]);
               if(moduleParam.doorConfig.waitTimeToClose == 0){
@@ -2513,21 +2668,35 @@ static THD_FUNCTION(procDoorControl ,p)
     if(evt & EV_TG1_TRIGGER){
       if(ready){
         chThdSleepMilliseconds(100);
-        if(di_map[DOOR1_OPEN].read(&di_map[DOOR1_OPEN]) ==0 || appParam.doorReopen == 1){
+        if(di_map[TG1_IN].read(&di_map[TG1_IN]) ==0 || appParam.doorReopen == 1){
           appParam.doorReopen = 0;
           appParam.openTimes++;
           //do_map[DOOR_CLOSED].clear(&do_map[DOOR_CLOSED]);
           err = doorOpenCtrl();
+          appParam.errState = err;
           if(err == MSG_OK){
-            //do_map[DOOR_OPEN_DONE].set(&do_map[DOOR_OPEN_DONE]);
+            if(di_map[TG1_IN].read(&di_map[TG1_IN]) == 1){
+              if(moduleParam.doorConfig.waitTimeToClose == 0){
+                appParam.closeByTimeout = 1;
+                chEvtSignal(appParam.mainThread,EV_TG2_TRIGGER);
+              }else{
+                chVTSet(&vt_door_close,S2ST(moduleParam.doorConfig.waitTimeToClose),door_close_cb,NULL);
+              }
+            }
           }
           else{
           }
         }
-        else{ // check if door @home, start count down to close door 
+        else if(di_map[TG1_IN].read(&di_map[TG1_IN]) == 1){ // check if door @home, start count down to close door 
           //bool act = false;
           if(appParam.motorConfig[0].inhome == 0){
-            chVTSet(&vt_door_close,S2ST(moduleParam.doorConfig.waitTimeToClose),door_close_cb,NULL);
+            if(moduleParam.doorConfig.waitTimeToClose == 0){
+              appParam.closeByTimeout = 1;
+              chEvtSignal(appParam.mainThread,EV_TG2_TRIGGER);
+            }else{
+              chVTSet(&vt_door_close,S2ST(moduleParam.doorConfig.waitTimeToClose),door_close_cb,NULL);
+            }
+//            chVTSet(&vt_door_close,S2ST(moduleParam.doorConfig.waitTimeToClose),door_close_cb,NULL);
           }
         }
       }
@@ -2539,6 +2708,7 @@ static THD_FUNCTION(procDoorControl ,p)
         appParam.openTimes++;
         //do_map[DOOR_CLOSED].clear(&do_map[DOOR_CLOSED]);
         err = doorOpenCtrl();
+        appParam.errState = err;
         if(err == MSG_OK){
           //do_map[DOOR_OPEN_DONE].set(&do_map[DOOR_OPEN_DONE]);
           if(moduleParam.doorConfig.waitTimeToClose == 0){
@@ -2558,10 +2728,11 @@ static THD_FUNCTION(procDoorControl ,p)
     }
 
     if(evt & EV_TG2_TRIGGER){
-      if(di_map[DOOR2_OPEN].read(&di_map[DOOR2_OPEN]) ==0 || (appParam.closeByTimeout == 1)){
+      if(di_map[TG1_IN].read(&di_map[TG1_IN]) ==0 || (appParam.closeByTimeout == 1)){
         appParam.closeByTimeout = 0;
         //do_map[DOOR_OPEN_DONE].clear(&do_map[DOOR_OPEN_DONE]);
         err = doorCloseCtrl();
+        appParam.errState = err;
         if(err == MSG_OK){
           //do_map[DOOR_CLOSED].set(&do_map[DOOR_CLOSED]);
         }
@@ -2590,8 +2761,21 @@ static THD_FUNCTION(procDoorControl ,p)
       NVIC_SystemReset();
     }
     
+    if(evt & EV_SYS_RESET_NVM){
+      opState.openTimes = 0;
+      for(uint8_t i=0;i<3;i++){
+        opState.lock_times[i] = 0;
+        opState.max_working_current[i] = 0;
+      }
+      sysSaveOpstate();
+      appParam.openTimes = 0;
+    }
     if(appParam.openTimes >= 10){
       opState.openTimes += appParam.openTimes;
+      opState.lock_times[0] = moduleParam.door[0].lock_times;
+      opState.lock_times[1] = moduleParam.door[1].lock_times;
+      opState.max_working_current[0] = moduleParam.door[0].max_working_current;
+      opState.max_working_current[1] = moduleParam.door[0].max_working_current;
       sysSaveOpstate();
       appParam.openTimes = 0;
     }
@@ -2633,11 +2817,11 @@ void main(void)
   rsi_app_init();
 #endif
   
-  extChannelEnable(&EXTD1,0);
-  extChannelEnable(&EXTD1,4);
-  extChannelEnable(&EXTD1,5);
-  extChannelEnable(&EXTD1,6);
-  extChannelEnable(&EXTD1,13);
+//  extChannelEnable(&EXTD1,0);
+//  extChannelEnable(&EXTD1,4);
+//  extChannelEnable(&EXTD1,5);
+//  extChannelEnable(&EXTD1,6);
+//  extChannelEnable(&EXTD1,13);
   
   uint16_t period;
   if((moduleParam.doorConfig.freq1 < 820) || (moduleParam.doorConfig.freq1 > 2000))
@@ -2683,19 +2867,21 @@ void ang1_int_handler(EXTDriver *extp, expchannel_t channel)
     if(appParam.icu[0].last != 0){
       appParam.icu[0].width = now - appParam.icu[0].last;
       appParam.icu[0].last = now;
-      appParam.icu[0].percent = (float)appParam.icu[0].period*100./(float)appParam.icu[0].width;
-//      appParam.icu[0].degree = appParam.icu[0].percent * moduleParam.door[0].degree_percent;
-      if(appParam.icu[0].percent < 8 || appParam.icu[0].percent > 92){
-        // error
-      }else{
-        appParam.icu[0].degree = (appParam.icu[0].percent-10) * moduleParam.doorConfig.degree_percent;
-        if(appParam.motorConfig[0].orgFound){
-          if(appParam.boardID & MODEL_DOOR_LEFT){
-            appParam.motorConfig[0].angle = iirInsertF(0,-(appParam.icu[0].degree - moduleParam.door[0].zeroAngle));
-          }else{
-            appParam.motorConfig[0].angle = iirInsertF(0,appParam.icu[0].degree - moduleParam.door[0].zeroAngle);
+      if(appParam.icu[0].width > 400){ // at least 4ms
+        appParam.icu[0].percent = (float)appParam.icu[0].period*100./(float)appParam.icu[0].width;
+  //      appParam.icu[0].degree = appParam.icu[0].percent * moduleParam.door[0].degree_percent;
+        if(appParam.icu[0].percent < 8 || appParam.icu[0].percent > 92){
+          // error
+        }else{
+          appParam.icu[0].degree = (appParam.icu[0].percent-10) * moduleParam.doorConfig.degree_percent;
+          if(appParam.motorConfig[0].orgFound){
+            if(appParam.boardID & MODEL_DOOR_LEFT){
+              appParam.motorConfig[0].angle = iirInsertF(0,-(appParam.icu[0].degree - moduleParam.door[0].zeroAngle));
+            }else{
+              appParam.motorConfig[0].angle = iirInsertF(0,appParam.icu[0].degree - moduleParam.door[0].zeroAngle);
+            }
+            if(appParam.motorConfig[0].angle < 0) appParam.motorConfig[0].angle = 0;
           }
-          if(appParam.motorConfig[0].angle < 0) appParam.motorConfig[0].angle = 0;
         }
       }
     }
@@ -2706,7 +2892,7 @@ void ang1_int_handler(EXTDriver *extp, expchannel_t channel)
     }
   }
   appParam.motorConfig[0].inhome = appParam.motorConfig[0].mel->read(appParam.motorConfig[0].mel)==0?1:0;
-  ValidDoorState();
+  //ValidDoorState();
 }
 
 void ang2_int_handler(EXTDriver *extp, expchannel_t channel)
@@ -2716,20 +2902,22 @@ void ang2_int_handler(EXTDriver *extp, expchannel_t channel)
   if(p->read(p)){ // rising
     if(appParam.icu[1].last != 0){
       appParam.icu[1].width = now - appParam.icu[1].last;
-      appParam.icu[1].percent = (float)appParam.icu[1].period*100./(float)appParam.icu[1].width;
-      if(appParam.icu[0].percent < 8 || appParam.icu[0].percent > 92){
-        // error
-      }else{
+      if(appParam.icu[1].width > 400){ // at least 4 ms
+        appParam.icu[1].percent = (float)appParam.icu[1].period*100./(float)appParam.icu[1].width;
+        if(appParam.icu[0].percent < 8 || appParam.icu[0].percent > 92){
+          // error
+        }else{
 
-        appParam.icu[1].degree = (appParam.icu[1].percent - 10) * moduleParam.doorConfig.degree_percent;
-  //      appParam.icu[1].degree = (appParam.icu[1].percent-10) * 2.75;
-        if(appParam.motorConfig[1].orgFound){
-          if(appParam.boardID & MODEL_DOOR_LEFT){
-            appParam.motorConfig[1].angle = iirInsertF(1,(appParam.icu[1].degree- moduleParam.door[1].zeroAngle));
-          }else{
-            appParam.motorConfig[1].angle = iirInsertF(1,-(appParam.icu[1].degree- moduleParam.door[1].zeroAngle));
+          appParam.icu[1].degree = (appParam.icu[1].percent - 10) * moduleParam.doorConfig.degree_percent;
+    //      appParam.icu[1].degree = (appParam.icu[1].percent-10) * 2.75;
+          if(appParam.motorConfig[1].orgFound){
+            if(appParam.boardID & MODEL_DOOR_LEFT){
+              appParam.motorConfig[1].angle = iirInsertF(1,(appParam.icu[1].degree- moduleParam.door[1].zeroAngle));
+            }else{
+              appParam.motorConfig[1].angle = iirInsertF(1,-(appParam.icu[1].degree- moduleParam.door[1].zeroAngle));
+            }
+            if(appParam.motorConfig[1].angle < 0) appParam.motorConfig[1].angle = 0;
           }
-          if(appParam.motorConfig[1].angle < 0) appParam.motorConfig[1].angle = 0;
         }
       }
     }
@@ -2740,7 +2928,7 @@ void ang2_int_handler(EXTDriver *extp, expchannel_t channel)
     }
   }
   appParam.motorConfig[1].inhome = appParam.motorConfig[1].mel->read(appParam.motorConfig[1].mel)==0?1:0;
-  ValidDoorState();
+  //ValidDoorState();
 }
 
 void tg1_int_handler(EXTDriver *extp, expchannel_t channel)
