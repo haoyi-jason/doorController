@@ -99,7 +99,8 @@ int8_t read40000(uint16_t offset, uint8_t *dptr)
     val = appParam.errState;
     break;
   case 31:
-    val = opState.openTimes + appParam.openTimes;
+//    val = opState.openTimes + appParam.openTimes;
+    val = opState.openTimes;// + appParam.openTimes;
     break;
   case 33:
     val = moduleParam.doorConfig.freq1;
@@ -332,6 +333,9 @@ int8_t read40300(uint16_t offset, uint8_t *dptr)
   case 14:
     val = VERSION_2;
     break;
+  case 15:
+    val = moduleParam.doorConfig.lockDetectCycle;
+    break;
   default:
     val = 0;
   }
@@ -382,6 +386,10 @@ int8_t write40300(uint16_t offset, uint8_t *dptr)
   case 12:
     moduleParam.doorConfig.adSampleIgnore = val;
     break;
+  case 15:
+    if((val >2) && (val < 100)){
+      moduleParam.doorConfig.lockDetectCycle = val;
+    }
   default:break;
   }
   

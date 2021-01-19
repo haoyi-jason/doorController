@@ -5,9 +5,10 @@
 #include "hal.h"
 #include "rsi_bt_common.h"
 #include "rsi_bt_config.h"
+#include "sysparam.h"
 
-#define VERSION 0x2012
-#define VERSION_2       0x2901
+#define VERSION 0x2101
+#define VERSION_2       0x1901
 
 typedef void (*rsi_interrupt_cb)(void);
 typedef void (*lora_interrupt_cb)(void *);
@@ -293,6 +294,23 @@ typedef struct{
   int16_t sz;
   uint8_t buffer[BUFFER_SZ];
 }buffer_t;
+
+
+typedef struct{
+  _motor_config_t *m;   // current motor
+  _motor_config_t *mf;  // motor to follow, null if none
+  _door_config_t *d;    // door config
+  _door_config_t *df;   // config of door to follow
+  uint8_t runType;      //
+  uint8_t dir;          // DIR_POS, DIR_NEG
+  systime_t runTime;    // cycle count
+  uint8_t stopType;     // ST_POSITION, ST_PEL, ST_MEL, ST_HOME
+  uint8_t actType;      // ACT_OPEN, ACT_CLOSE
+  int16_t actForce;     // 
+  int16_t actTime;// 0.1 sec
+  uint32_t assertMask;
+  uint16_t maxSpeed;
+}motor_run_t;
 
 
 typedef struct{

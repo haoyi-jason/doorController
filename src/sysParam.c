@@ -40,8 +40,8 @@ const _door_global_config_t default_door_config = {
   1,
   30,
   1,
-  20,
-  50,
+  2,
+  10,
   20,
   5, // 500ms
   820,60 // hz
@@ -72,6 +72,8 @@ void defaultParams(void)
   moduleParam.angle_check_time = 10; // cycle
   moduleParam.angle_check_diff = 5; // degree
   moduleParam.ramp = 5; // pwm duty increase/decrease speed
+  
+  moduleParam.doorConfig.lockDetectCycle = 3;
   
   opState.lock_times[0] = opState.lock_times[3] = opState.lock_times[2] =0;
   opState.max_working_current[0] = opState.max_working_current[1] = opState.max_working_current[2] = 0;
@@ -108,6 +110,11 @@ void sysParamInit()
   
   if(moduleParam.doorConfig.adSampleIgnore == 0)
     moduleParam.doorConfig.adSampleIgnore = 5;
+  
+  if(moduleParam.doorConfig.lockDetectCycle > 100)
+    moduleParam.doorConfig.lockDetectCycle = 3;
+  if(moduleParam.doorConfig.lockDetectCycle < 3)
+    moduleParam.doorConfig.lockDetectCycle = 3;
   
   sysReadOpState();
 }

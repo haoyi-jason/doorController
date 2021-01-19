@@ -11,7 +11,7 @@ EEP_HEADING revision
 */
 
 
-#define EEP_HEADING              0x45503034
+#define EEP_HEADING              0x45503036
 #define EEP_STORE_OFFSET        0x100
 #define EEP_OPPARAM_OFFSET        0x400
 
@@ -83,6 +83,7 @@ typedef struct{
   uint16_t ramp;                        // 馬達加/減速值
   uint16_t adSampleIgnore;      // 啟動取樣延時
   uint16_t freq1, freq2;        // pwm frequency
+  uint16_t lockDetectCycle;
 }_door_global_config_t;
 
 typedef struct{
